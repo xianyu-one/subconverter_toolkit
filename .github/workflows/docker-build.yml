@@ -37,14 +37,14 @@ jobs:
           push: true
           platforms: linux/arm64,linux/amd64
           tags: |
-            mrxianyu/subconverter:latest
-            mrxianyu/subconverter:${{ steps.get-version.outputs.version }}
+            1arry1awrence/subconverte:latest
+            1arry1awrence/subconverte:${{ steps.get-version.outputs.version }}
 
       - name: Docker Hub Description
         uses: peter-evans/dockerhub-description@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: mrxianyu/subconverter
+          repository: 1arry1awrence/subconverte
           readme-filepath: ./README.md
           short-description: ${{ github.event.repository.description }}
