@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  prefetch-proxy:
+    image: prefetch-proxy:latest
+    build: .
+    ports:
+      - "25500:25500"
+    environment:
+      # 监听端口
+      - LISTEN_ADDR=:25500
+      # 下游 Subconverter 的地址 (基于 docker-compose 网络)
+      - SUBCONVERTER_URL=http://subconverter:25500
+      # 需要预获取拦截的域名列表，英文逗号分隔
+      - TARGET_DOMAINS=my-special-sub.com,another-tricky.net
+      # 本地代理端口（不需要暴露到外部）
+      - PROXY_PORT=28080
+      # 提供给 Subconverter 拉取本地缓存文件的内网基础地址
+      - INTERNAL_BASE_URL=http://prefetch-proxy:25500
+      # 开启 Debug 调试模式
+      - DEBUG=true
+    depends_on:
+      - subconverter
+    restart: always
+
+  subconverter:
+    image: tindy2013/subconverter:latest
+    container_name: subconverter
+    restart: always
+    # 为了防止直接被外部绕过网关调用，可以不暴露它的 25500 端口，而是只通过 25500 访问网关
+    # ports:
+    #   - "25500:25500"
