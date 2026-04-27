@@ -19,6 +19,13 @@ services:
       - INTERNAL_BASE_URL=http://prefetch-proxy:25500
       # 开启 Debug 调试模式
       - DEBUG=true
+      
+      # 规则文件路径，为空代表不启用此功能
+      - RULE_LIST_PATH=/data/my-rules.list
+      - FAKE_IP_FILTER_PATH=/data/fake-ip-template.yaml
+    volumes:
+      # 挂载包含规则和模板的本地目录（需同时挂载给 subconverter）
+      - ./rules_data:/data
     depends_on:
       - subconverter
     restart: always
@@ -27,6 +34,9 @@ services:
     image: tindy2013/subconverter:latest
     container_name: subconverter
     restart: always
+    volumes:
+      # 这里也挂载相同的目录，以便 subconverter 能读取更新后的文件
+      - ./rules_data:/data
     # 为了防止直接被外部绕过网关调用，可以不暴露它的 25500 端口，而是只通过 25500 访问网关
     # ports:
     #   - "25500:25500"

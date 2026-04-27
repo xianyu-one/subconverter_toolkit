@@ -2,8 +2,10 @@
 FROM golang:1.24-alpine AS builder
 WORKDIR /app
 COPY go.mod ./
+# 若有 go.sum 也一并复制 (可选)
+COPY go.sum ./
 # 初始化并下载依赖
-RUN go mod download
+RUN export GOPROXY=https://goproxy.cn && go mod download 
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o prefetch-proxy .
 
@@ -34,6 +36,10 @@ ENV MIHOMO_PATH="/usr/local/bin/mihomo"
 ENV PROXY_PORT="28080"
 ENV INTERNAL_BASE_URL="http://prefetch-proxy:8080"
 ENV DEBUG="false"
+
+# 文件挂载环境变量预留
+ENV RULE_LIST_PATH=""
+ENV FAKE_IP_FILTER_PATH=""
 
 EXPOSE 8080
 
