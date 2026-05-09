@@ -32,6 +32,8 @@ type Config struct {
 	Debug            bool   // 是否开启调试日志
 	RuleListPath     string // 规则集文件路径
 	FakeIPFilterPath string // Fake-IP 模板文件路径
+	ChainToken       string // 用于链式代理注入鉴权的 token
+	PrivateNodesPath string // 私有节点文件路径
 }
 
 type Node map[string]interface{}
@@ -102,6 +104,8 @@ func initConfig() {
 		Debug:            getEnv("DEBUG", "false") == "true",
 		RuleListPath:     getEnv("RULE_LIST_PATH", ""),
 		FakeIPFilterPath: getEnv("FAKE_IP_FILTER_PATH", ""),
+		ChainToken:       getEnv("CHAIN_TOKEN", ""),
+		PrivateNodesPath: getEnv("PRIVATE_NODES_PATH", "/private_nodes.yaml"),
 	}
 	domains := getEnv("TARGET_DOMAINS", "")
 	if domains != "" {
@@ -118,6 +122,9 @@ func main() {
 	}
 	if cfg.FakeIPFilterPath != "" {
 		log.Printf("已启用 Fake-IP 模板动态更新，路径: %s", cfg.FakeIPFilterPath)
+	}
+	if cfg.ChainToken != "" {
+		log.Printf("已启用私有节点注入", maskLogURL(cfg.ChainToken))
 	}
 	if cfg.Debug {
 		log.Printf("调试模式 (DEBUG) 已开启")
@@ -139,6 +146,9 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
+
+	// 优先匹配精确路径：处理私有节点链式代理注入的请求
+	mux.HandleFunc("/internal/private", handlePrivateNodes)
 
 	// 处理内部缓存请求短链
 	mux.HandleFunc("/internal/", handleInternalSub)
@@ -198,6 +208,21 @@ func handleProxyRequest(w http.ResponseWriter, r *http.Request, proxy *httputil.
 		}
 	}
 
+	// 链式代理：处理私有节点注入
+	hasChainToken := query.Has("chaintoken")
+	if cfg.ChainToken != "" && query.Get("chaintoken") == cfg.ChainToken {
+		debugLog("匹配到正确的 chaintoken，注入私有节点")
+		// 拼接通过接口暴露的本地域名链式节点提供给 Subconverter
+		subURLs = append(subURLs, fmt.Sprintf("%s/internal/private", cfg.InternalBaseURL))
+		modified = true
+	}
+
+	// 擦除 chaintoken 参数防止透传产生不可预知的问题
+	if hasChainToken {
+		query.Del("chaintoken")
+		modified = true
+	}
+
 	// [新增] 提取并写入常规订阅的域名
 	if len(regularSubs) > 0 {
 		joinedRegularSubs := strings.Join(regularSubs, "|")
@@ -207,7 +232,7 @@ func handleProxyRequest(w http.ResponseWriter, r *http.Request, proxy *httputil.
 	if modified {
 		query.Set("url", strings.Join(subURLs, "|"))
 		r.URL.RawQuery = query.Encode()
-		log.Printf("请求参数已修改发往 Subconverter (包含内部获取缓存链接)")
+		log.Printf("请求参数已修改发往 Subconverter (包含内部获取缓存链接或私有节点)")
 	} else {
 		debugLog("未修改任何订阅链接，原样转发")
 	}
@@ -613,6 +638,50 @@ func fetchRealNodes(targetURL string, proxyPort int) ([]byte, error) {
 		debugLog("fetchRealNodes: 成功获取真实节点数据，长度: %d 字节", len(body))
 	}
 	return body, err
+}
+
+// handlePrivateNodes 响应 Subconverter 获取私有节点配置的请求
+func handlePrivateNodes(w http.ResponseWriter, r *http.Request) {
+	if cfg.PrivateNodesPath == "" {
+		http.Error(w, "未配置私有节点文件路径", http.StatusNotFound)
+		return
+	}
+
+	data, err := os.ReadFile(cfg.PrivateNodesPath)
+	if err != nil {
+		debugLog("读取私有节点文件失败: %v", err)
+		http.Error(w, "Failed to read private nodes", http.StatusInternalServerError)
+		return
+	}
+
+	var config ClashConfig
+	err = yaml.Unmarshal(data, &config)
+	if err != nil {
+		debugLog("解析私有节点 YAML 失败: %v", err)
+		http.Error(w, "Failed to unmarshal private nodes", http.StatusInternalServerError)
+		return
+	}
+
+	for i := range config.Proxies {
+		if name, ok := config.Proxies[i]["name"].(string); ok {
+			// 避免多次请求导致重复添加前缀
+			if !strings.HasPrefix(name, "🔒私有") {
+				config.Proxies[i]["name"] = "🔒私有 - " + name
+			}
+		}
+		// 动态注入 dialer-proxy，作为链式代理第二跳的基础
+		config.Proxies[i]["dialer-proxy"] = "🚀 前置节点池"
+	}
+
+	outData, err := yaml.Marshal(&config)
+	if err != nil {
+		debugLog("序列化私有节点失败: %v", err)
+		http.Error(w, "Failed to marshal private nodes", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write(outData)
 }
 
 // handleInternalSub 响应 Subconverter 获取缓存订阅的请求
