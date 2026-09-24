@@ -180,6 +180,8 @@ docker build -t prefetch-proxy:latest ./prefetch-proxy
 
 当前 `prefetch-proxy/Dockerfile` 内置的是 Mihomo `v1.18.2` 的 `linux-amd64` 二进制，因此该镜像当前只适合 AMD64 环境。若要部署到 ARM64，需要调整 Mihomo 下载目标。
 
+仓库的 `Prefetch Proxy Docker Build` 工作流会在相关 PR 上验证镜像构建；相关变更进入 `main`、每月定时或手动触发时，会使用现有的 `DOCKERHUB_USERNAME` 与 `DOCKERHUB_TOKEN` 仓库密钥发布 `mrxianyu/prefetch-proxy:latest` 和对应的 `sha-<提交 SHA>` 标签。该工作流仅构建 `linux/amd64`。
+
 ### 与 Subconverter 一起运行
 
 下面的示例启用二次订阅处理，并将服务统一暴露在宿主机的 `25500` 端口：
@@ -253,16 +255,22 @@ services:
 
 ### 注入私有节点与链式代理
 
-私有节点文件必须是 Clash YAML，且包含顶层 `proxies`：
+将私有节点、组和密钥保存在同一份 YAML 中。`proxies` 沿用 Clash 节点字段，`groups` 仅用于选择节点，不会传给 Subconverter：
 
 ```yaml
 proxies:
   - name: private-node
+    groups: [family, shared]
     type: ss
     server: private.example.com
     port: 443
     cipher: aes-128-gcm
     password: change-me
+keys:
+  - name: family
+    token: replace-with-a-long-random-token
+    nodes: [private-node]
+    groups: [shared]
 ```
 
 配置 Prefetch Proxy：
@@ -272,25 +280,26 @@ services:
   prefetch-proxy:
     # 省略其他配置
     environment:
-      CHAIN_TOKEN: "replace-with-a-long-random-token"
-      PRIVATE_NODES_PATH: "/run/secrets/private-nodes.yaml"
+      PRIVATE_CONFIG_PATH: "/run/secrets/private-config.yaml"
     volumes:
-      - ./private-nodes.yaml:/run/secrets/private-nodes.yaml:ro
+      - ./private-config.yaml:/run/secrets/private-config.yaml:ro
 ```
 
 请求时添加令牌：
 
 ```text
-http://localhost:25500/sub?target=clash&url=<订阅地址>&config=<new.ini 地址>&chaintoken=<CHAIN_TOKEN>
+http://localhost:25500/sub?target=clash&url=<订阅地址>&config=<new.ini 地址>&chaintoken=<对应的 token>
 ```
 
-令牌匹配时，代理会把私有节点作为额外订阅交给 Subconverter，并执行以下处理：
+令牌匹配时，代理会把该密钥通过节点名称与组选择的节点作为额外订阅交给 Subconverter；名称与组的选择结果取并集，按节点定义顺序去重，并执行以下处理：
 
 - 节点名称增加 `🔒私有 - ` 前缀
 - 节点增加 `dialer-proxy: 🚀 前置节点池`
 - `new.ini` 将私有节点加入 `🔒 私有出口选择`
 
-`/internal/private` 接口本身没有单独鉴权，而 Prefetch Proxy 的监听端口也会暴露这个路径。部署到公网时，应在外层反向代理中禁止外部访问 `/internal/`，只允许 Subconverter 通过容器网络访问；否则私有节点可能被直接读取。
+私有节点通过每次请求生成的随机内部地址提供，地址只允许读取该密钥选中的节点，10 分钟后失效；固定的 `/internal/private` 已移除。缺少 `chaintoken` 时正常转换，错误令牌返回 HTTP 403。令牌不会转发给 Subconverter。配置仅在启动时读取，修改后须重启；未设置 `PRIVATE_CONFIG_PATH` 时，私有节点功能关闭。
+
+请将含真实令牌和节点密码的配置文件保留在仓库外，并以只读卷挂载。配置格式和校验规则详见 [设计文档](docs/prefetch-proxy-private-config-design.md)。
 
 ### 环境变量
 
@@ -305,8 +314,7 @@ http://localhost:25500/sub?target=clash&url=<订阅地址>&config=<new.ini 地�
 | `INTERNAL_BASE_URL` | `http://prefetch-proxy:8080` | Subconverter 用来回读缓存和私有节点的容器内地址 |
 | `RULE_LIST_PATH` | 空 | 节点域名 Rule List 的写入路径；为空时禁用 |
 | `FAKE_IP_FILTER_PATH` | 空 | 节点域名 Fake-IP Filter 的写入路径；为空时禁用 |
-| `CHAIN_TOKEN` | 空 | 私有节点注入令牌；为空时禁用注入 |
-| `PRIVATE_NODES_PATH` | `/private_nodes.yaml` | 私有节点 YAML 路径 |
+| `PRIVATE_CONFIG_PATH` | 空 | 私有节点、组和密钥 YAML 路径；为空时禁用注入 |
 | `DEBUG` | `false` | 设为 `true` 输出调试日志及 Mihomo 日志 |
 
 `PROXY_PORT` 和 `API_PORT` 必须避免与容器内其他进程占用的端口冲突。`INTERNAL_BASE_URL` 必须是 Subconverter 容器能够访问的地址，不能填写客户端所见但容器无法访问的公网或宿主机地址。
