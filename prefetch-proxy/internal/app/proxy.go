@@ -5,8 +5,9 @@ import (
 	"log"
 	"net/http"
 	"net/http/httputil"
-	"prefetch-proxy/internal/privateconfig"
 	"strings"
+
+	"prefetch-proxy/internal/privateconfig"
 )
 
 // handleProxyRequest 处理并重写客户端发往 Subconverter 的请求
@@ -14,6 +15,7 @@ func (s *Service) handleProxyRequest(w http.ResponseWriter, r *http.Request, pro
 	query := r.URL.Query()
 	hasChainToken := query.Has("chaintoken")
 	var selected []privateconfig.Node
+	var keyName string
 	if hasChainToken {
 		var ok bool
 		selected, ok = s.privateNodes.Select(query.Get("chaintoken"))
@@ -21,7 +23,33 @@ func (s *Service) handleProxyRequest(w http.ResponseWriter, r *http.Request, pro
 			http.Error(w, "Invalid chaintoken", http.StatusForbidden)
 			return
 		}
+		keyName, _ = s.privateNodes.Name(query.Get("chaintoken"))
 		query.Del("chaintoken")
+		r.URL.RawQuery = query.Encode()
+	}
+	if r.URL.Path == "/sub" && query.Has("coverprofile") {
+		if !hasChainToken {
+			http.Error(w, "Invalid chaintoken", http.StatusForbidden)
+			return
+		}
+		profile, ok := s.cfg.CoverProfiles.Select(keyName, query.Get("coverprofile"))
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		query.Del("coverprofile")
+		if query.Has("url") && query.Get("url") == "" {
+			http.Error(w, "Empty url", http.StatusBadRequest)
+			return
+		}
+		if !query.Has("url") {
+			query.Set("url", strings.Join(profile.Upstreams, "|"))
+		}
+		for name, value := range profile.Params {
+			if !query.Has(name) {
+				query.Set(name, value)
+			}
+		}
 		r.URL.RawQuery = query.Encode()
 	}
 	urlParam := query.Get("url")
@@ -37,32 +65,48 @@ func (s *Service) handleProxyRequest(w http.ResponseWriter, r *http.Request, pro
 	s.debugLog("解析到的 url 参数值: %s", maskLogURL(urlParam))
 
 	// 拆分多个由 "|" 分隔的订阅链接
-	subURLs := strings.Split(urlParam, "|")
+	requestedURLs := strings.Split(urlParam, "|")
+	var subURLs []string
 	var regularSubs []string
 	modified := hasChainToken
 
 	// 遍历所有订阅链接，区分是否需要经过二次代理预获取
-	for i, subURL := range subURLs {
+	for _, subURL := range requestedURLs {
 		if s.isTargetDomain(subURL) {
 			s.debugLog("命中目标域名，开始预获取流程: %s", maskLogURL(subURL))
 			internalLink, err := s.processSubscription(subURL)
 			if err != nil {
-				log.Printf("处理二次订阅失败 [%s]: %v", maskLogURL(subURL), err)
-				http.Error(w, fmt.Sprintf("代理预获取失败: %v", err), http.StatusInternalServerError)
-				return
+				log.Printf("处理二次订阅失败 [%s]", maskLogURL(subURL))
+				modified = true
+				continue
+			}
+			if !s.hasUpstreamNodes(r, internalLink) {
+				s.cache.Delete(md5Hash(subURL))
+				log.Printf("二次订阅没有可解析节点 [%s]", maskLogURL(subURL))
+				modified = true
+				continue
 			}
 			s.debugLog("订阅转换为内部链接: %s -> %s", maskLogURL(subURL), internalLink)
 			// 将原始订阅链接替换为本地缓存服务的短链
-			subURLs[i] = internalLink
+			subURLs = append(subURLs, internalLink)
 			modified = true
 		} else {
 			s.debugLog("常规订阅记录（稍后将提取其域名）: %s", maskLogURL(subURL))
 			regularSubs = append(regularSubs, subURL)
+			subURLs = append(subURLs, subURL)
 		}
+	}
+	if len(subURLs) == 0 {
+		http.Error(w, "All upstreams failed", http.StatusBadGateway)
+		return
+	}
+	if len(selected) > 0 && !s.hasUpstreamNodes(r, strings.Join(subURLs, "|")) {
+		http.Error(w, "All upstreams failed", http.StatusBadGateway)
+		return
 	}
 
 	// 链式代理：处理私有节点注入
-	if hasChainToken {
+	if len(selected) > 0 {
 		id, err := s.privateLinks.Issue(selected)
 		if err != nil {
 			http.Error(w, "Failed to prepare private nodes", http.StatusInternalServerError)

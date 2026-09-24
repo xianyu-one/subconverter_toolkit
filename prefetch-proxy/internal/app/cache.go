@@ -41,3 +41,9 @@ func (c *CacheManager) Get(key string) []byte {
 	}
 	return item.Data
 }
+
+func (c *CacheManager) Delete(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.items, key)
+}

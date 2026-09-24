@@ -12,7 +12,7 @@ import (
 func Run() {
 	cfg, privateNodes, err := loadConfig()
 	if err != nil {
-		log.Fatalf("私有节点配置加载失败: %v", err)
+		log.Fatalf("配置加载失败: %v", err)
 	}
 	service := NewService(cfg, privateNodes)
 	log.Printf("服务启动监听在 %s，Subconverter 后端: %s", cfg.ListenAddr, cfg.SubconverterURL)
@@ -25,7 +25,10 @@ func Run() {
 		log.Printf("已启用 Fake-IP 模板动态更新，路径: %s", cfg.FakeIPFilterPath)
 	}
 	if privateNodes != nil {
-		log.Printf("已启用私有节点注入")
+		log.Printf("已加载密钥配置")
+	}
+	if cfg.CoverProfiles != nil {
+		log.Printf("已启用固定订阅配置")
 	}
 	if cfg.Debug {
 		log.Printf("调试模式 (DEBUG) 已开启")

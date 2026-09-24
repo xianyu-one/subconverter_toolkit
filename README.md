@@ -301,6 +301,51 @@ http://localhost:25500/sub?target=clash&url=<订阅地址>&config=<new.ini 地�
 
 请将含真实令牌和节点密码的配置文件保留在仓库外，并以只读卷挂载。配置格式和校验规则详见 [设计文档](docs/prefetch-proxy-private-config-design.md)。
 
+### 固定订阅配置
+
+客户端可以保存固定的 `/sub` 地址，把上游订阅和 Subconverter 参数放在 Prefetch Proxy 的配置文件中。一个密钥可有多份配置；每份配置引用本密钥下的若干命名上游。修改文件并重启 Prefetch Proxy 后，客户端地址保持不变。
+
+先在 `PRIVATE_CONFIG_PATH` 的文件中定义密钥。只使用固定订阅时，可以省略 `proxies`、`nodes` 和 `groups`：
+
+```yaml
+keys:
+  - name: alice
+    token: replace-with-a-long-random-token
+```
+
+再创建固定订阅配置文件，例如 `/run/secrets/cover-profiles.yaml`：
+
+```yaml
+keys:
+  - name: alice
+    upstreams:
+      first: https://provider-1.example/subscription/example
+      second: https://provider-2.example/subscription/example
+      third: https://provider-3.example/subscription/example
+    profiles:
+      "1":
+        upstreams: [first, second]
+        params:
+          target: clash
+          config: https://example.com/custom.ini
+          filename: abc
+      "2":
+        upstreams: [first, second, third]
+        params:
+          target: clash
+          exclude: "^test"
+```
+
+设置 `COVER_PROFILE_CONFIG_PATH=/run/secrets/cover-profiles.yaml`，并将两个文件以只读卷挂载。客户端使用：
+
+```text
+https://your-prefetch-proxy.example/sub?chaintoken=<令牌>&coverprofile=1
+```
+
+请求中的 `url` 会整体替换配置中的上游列表；`target`、`config`、`exclude`、`include`、`filename` 等参数逐项覆盖文件默认值。显式空 `exclude=` 可清除文件值，空 `url=` 会报错。不带 `coverprofile` 的旧 `/sub` 请求继续使用客户端提供的参数。
+
+多个上游中只要有一个提供可解析节点即可继续转换；全部失败时返回错误，私有节点不计入成功上游。代理会跳过预取失败的上游；普通上游的部分失败依赖后端 Subconverter 启用 `skip_failed_links = true`，本仓库提供的 `pref.toml` 已启用。完整格式及错误行为见[固定订阅配置设计](docs/prefetch-proxy-cover-profiles-design.md)。
+
 ### 环境变量
 
 | 变量 | 默认值 | 说明 |
@@ -315,6 +360,7 @@ http://localhost:25500/sub?target=clash&url=<订阅地址>&config=<new.ini 地�
 | `RULE_LIST_PATH` | 空 | 节点域名 Rule List 的写入路径；为空时禁用 |
 | `FAKE_IP_FILTER_PATH` | 空 | 节点域名 Fake-IP Filter 的写入路径；为空时禁用 |
 | `PRIVATE_CONFIG_PATH` | 空 | 私有节点、组和密钥 YAML 路径；为空时禁用注入 |
+| `COVER_PROFILE_CONFIG_PATH` | 空 | 固定订阅配置 YAML 路径；设置时必须同时设置 `PRIVATE_CONFIG_PATH` |
 | `DEBUG` | `false` | 设为 `true` 输出调试日志及 Mihomo 日志 |
 
 `PROXY_PORT` 和 `API_PORT` 必须避免与容器内其他进程占用的端口冲突。`INTERNAL_BASE_URL` 必须是 Subconverter 容器能够访问的地址，不能填写客户端所见但容器无法访问的公网或宿主机地址。

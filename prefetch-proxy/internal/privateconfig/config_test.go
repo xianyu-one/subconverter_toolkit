@@ -164,3 +164,16 @@ keys:
 		t.Fatalf("selection changed stored node: %v", second)
 	}
 }
+
+func TestSubscriptionOnlyKeyHasNoPrivateNodes(t *testing.T) {
+	config, err := privateconfig.Parse([]byte("keys:\n  - name: alice\n    token: alice-secret\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nodes, ok := config.Select("alice-secret"); !ok || len(nodes) != 0 {
+		t.Fatalf("subscription-only key selection = %v, %v", nodes, ok)
+	}
+	if name, ok := config.Name("alice-secret"); !ok || name != "alice" {
+		t.Fatalf("key name = %q, %v", name, ok)
+	}
+}

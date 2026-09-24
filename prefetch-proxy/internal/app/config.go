@@ -1,12 +1,14 @@
 package app
 
 import (
+	"fmt"
 	"log"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
 
+	"prefetch-proxy/internal/coverconfig"
 	"prefetch-proxy/internal/prefetch"
 	"prefetch-proxy/internal/privateconfig"
 	"prefetch-proxy/internal/rules"
@@ -14,17 +16,19 @@ import (
 
 // Config 环境配置结构，存放所有从环境变量读取的配置项
 type Config struct {
-	ListenAddr        string   // 服务监听地址，默认 :8080
-	SubconverterURL   string   // 后端真实的 Subconverter 地址
-	TargetDomains     []string // 需要被拦截并执行二次代理（预获取）的目标域名列表
-	MihomoPath        string   // Mihomo 可执行文件的绝对路径
-	ProxyPort         int      // 临时拉起的 Mihomo 提供的 Socks5 代理端口
-	ApiPort           int      // 临时拉起的 Mihomo 提供的 External Controller API 控制端口
-	InternalBaseURL   string   // 用于 Subconverter 访问本服务缓存的内部地址
-	Debug             bool     // 是否开启调试日志输出
-	RuleListPath      string   // 提取真实节点域名后，写入的规则集文件路径
-	FakeIPFilterPath  string   // 提取真实节点域名后，写入的 Fake-IP 模板文件路径
-	PrivateConfigPath string   // 包含私有节点、组和密钥的 YAML 路径
+	ListenAddr             string   // 服务监听地址，默认 :8080
+	SubconverterURL        string   // 后端真实的 Subconverter 地址
+	TargetDomains          []string // 需要被拦截并执行二次代理（预获取）的目标域名列表
+	MihomoPath             string   // Mihomo 可执行文件的绝对路径
+	ProxyPort              int      // 临时拉起的 Mihomo 提供的 Socks5 代理端口
+	ApiPort                int      // 临时拉起的 Mihomo 提供的 External Controller API 控制端口
+	InternalBaseURL        string   // 用于 Subconverter 访问本服务缓存的内部地址
+	Debug                  bool     // 是否开启调试日志输出
+	RuleListPath           string   // 提取真实节点域名后，写入的规则集文件路径
+	FakeIPFilterPath       string   // 提取真实节点域名后，写入的 Fake-IP 模板文件路径
+	PrivateConfigPath      string   // 包含私有节点、组和密钥的 YAML 路径
+	CoverProfileConfigPath string
+	CoverProfiles          *coverconfig.Config
 }
 
 type Service struct {
@@ -103,27 +107,39 @@ func maskLogURL(u string) string {
 // initConfig 初始化环境变量配置
 func loadConfig() (*Config, *privateconfig.Config, error) {
 	cfg := &Config{
-		ListenAddr:        getEnv("LISTEN_ADDR", ":8080"),
-		SubconverterURL:   getEnv("SUBCONVERTER_URL", "http://subconverter:25500"),
-		MihomoPath:        getEnv("MIHOMO_PATH", "/usr/local/bin/mihomo"),
-		ProxyPort:         getEnvAsInt("PROXY_PORT", 28080),
-		ApiPort:           getEnvAsInt("API_PORT", 9090), // 新增: 默认 9090 作为 Mihomo 控制端 API 端口
-		InternalBaseURL:   getEnv("INTERNAL_BASE_URL", "http://prefetch-proxy:8080"),
-		Debug:             getEnv("DEBUG", "false") == "true",
-		RuleListPath:      getEnv("RULE_LIST_PATH", ""),
-		FakeIPFilterPath:  getEnv("FAKE_IP_FILTER_PATH", ""),
-		PrivateConfigPath: getEnv("PRIVATE_CONFIG_PATH", ""),
+		ListenAddr:             getEnv("LISTEN_ADDR", ":8080"),
+		SubconverterURL:        getEnv("SUBCONVERTER_URL", "http://subconverter:25500"),
+		MihomoPath:             getEnv("MIHOMO_PATH", "/usr/local/bin/mihomo"),
+		ProxyPort:              getEnvAsInt("PROXY_PORT", 28080),
+		ApiPort:                getEnvAsInt("API_PORT", 9090), // 新增: 默认 9090 作为 Mihomo 控制端 API 端口
+		InternalBaseURL:        getEnv("INTERNAL_BASE_URL", "http://prefetch-proxy:8080"),
+		Debug:                  getEnv("DEBUG", "false") == "true",
+		RuleListPath:           getEnv("RULE_LIST_PATH", ""),
+		FakeIPFilterPath:       getEnv("FAKE_IP_FILTER_PATH", ""),
+		PrivateConfigPath:      getEnv("PRIVATE_CONFIG_PATH", ""),
+		CoverProfileConfigPath: getEnv("COVER_PROFILE_CONFIG_PATH", ""),
 	}
 	domains := getEnv("TARGET_DOMAINS", "")
 	if domains != "" {
 		cfg.TargetDomains = strings.Split(domains, ",")
 	}
+	var privateNodes *privateconfig.Config
 	if cfg.PrivateConfigPath != "" {
-		privateNodes, err := privateconfig.Load(cfg.PrivateConfigPath)
+		var err error
+		privateNodes, err = privateconfig.Load(cfg.PrivateConfigPath)
 		if err != nil {
 			return nil, nil, err
 		}
-		return cfg, privateNodes, nil
 	}
-	return cfg, nil, nil
+	if cfg.CoverProfileConfigPath != "" {
+		if privateNodes == nil {
+			return nil, nil, fmt.Errorf("COVER_PROFILE_CONFIG_PATH requires PRIVATE_CONFIG_PATH")
+		}
+		var err error
+		cfg.CoverProfiles, err = coverconfig.Load(cfg.CoverProfileConfigPath, privateNodes)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	return cfg, privateNodes, nil
 }

@@ -27,6 +27,7 @@ type fileSpec struct {
 // Config is an immutable, validated mapping from bearer tokens to Clash nodes.
 type Config struct {
 	byToken map[string][]Node
+	names   map[string]string
 }
 
 func Load(path string) (*Config, error) {
@@ -51,8 +52,8 @@ func Parse(data []byte) (*Config, error) {
 		}
 		return nil, formatYAMLError(err)
 	}
-	if len(spec.Proxies) == 0 || len(spec.Keys) == 0 {
-		return nil, fmt.Errorf("private config requires proxies and keys")
+	if len(spec.Keys) == 0 {
+		return nil, fmt.Errorf("private config requires keys")
 	}
 
 	names := make(map[string]bool)
@@ -90,7 +91,7 @@ func Parse(data []byte) (*Config, error) {
 		}
 	}
 
-	result := &Config{byToken: make(map[string][]Node, len(spec.Keys))}
+	result := &Config{byToken: make(map[string][]Node, len(spec.Keys)), names: make(map[string]string, len(spec.Keys))}
 	keyNames := make(map[string]bool)
 	for i, key := range spec.Keys {
 		if strings.TrimSpace(key.Name) == "" || strings.TrimSpace(key.Token) == "" {
@@ -103,6 +104,8 @@ func Parse(data []byte) (*Config, error) {
 		if _, exists := result.byToken[key.Token]; exists {
 			return nil, fmt.Errorf("keys[%d] duplicates another token", i)
 		}
+		result.byToken[key.Token] = nil
+		result.names[key.Token] = key.Name
 		wantedNames := make(map[string]bool)
 		wantedGroups := make(map[string]bool)
 		for _, name := range key.Nodes {
@@ -137,11 +140,28 @@ func Parse(data []byte) (*Config, error) {
 				result.byToken[key.Token] = append(result.byToken[key.Token], clean)
 			}
 		}
-		if len(result.byToken[key.Token]) == 0 {
-			return nil, fmt.Errorf("keys[%d] selects no nodes", i)
-		}
 	}
 	return result, nil
+}
+
+func (c *Config) Name(token string) (string, bool) {
+	if c == nil {
+		return "", false
+	}
+	name, ok := c.names[token]
+	return name, ok
+}
+
+func (c *Config) HasName(name string) bool {
+	if c == nil {
+		return false
+	}
+	for _, candidate := range c.names {
+		if candidate == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Config) Select(token string) ([]Node, bool) {
