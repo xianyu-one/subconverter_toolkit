@@ -88,23 +88,6 @@ https://raw.githubusercontent.com/xianyu-one/subconverter-toolkit/main/all-onlin
 https://your-subconverter.example/sub?target=clash&url=<订阅地址>&config=https%3A%2F%2Fraw.githubusercontent.com%2Fxianyu-one%2Fsubconverter-toolkit%2Fmain%2Fall-online.ini
 ```
 
-### `new.ini`
-
-私有部署版本。在 `all-online.ini` 的基础上增加了：
-
-- 内网规则 `http://caddy-local/rule-list/xianyudomain.list`
-
-`all-online.ini` 与 `new.ini` 都定义了 `🔒 私有出口选择` 和 `🚀 前置节点池`，以便两份配置都能接收 Prefetch Proxy 注入的私有节点。没有可用前置节点时，不要选择私有出口；Subconverter 对空策略组可能填入 `DIRECT`。
-
-这个文件依赖部署环境中的 `caddy-local` 主机名，并不适合直接在公共 Subconverter 实例上使用。使用前请修改其中的内网规则地址，确保 Subconverter 容器能够访问它。
-
-配合私有节点注入时，请通过 Prefetch Proxy 请求转换接口，并添加正确的 `chaintoken`：
-
-```text
-https://your-prefetch-proxy.example/sub?target=clash&url=<订阅地址>&config=<new.ini 地址>&chaintoken=<令牌>
-```
-
-Prefetch Proxy 会在转发前删除 `chaintoken`，不会将它传给 Subconverter。
 
 ### Mihomo Redir-Host + TUN
 
@@ -120,7 +103,7 @@ Redir-Host 返回真实 IP，允许 Android 私人 DNS 和浏览器安全 DNS �
 
 检查 Redir-Host 时，请看**原始订阅 YAML** 的 `dns.enhanced-mode`，并确认没有输出 `fake-ip-range`、`fake-ip-filter` 等键。FlClash 展开的运行配置可能显示 Mihomo 的默认 DNS 字段，包括未启用的 Fake-IP 默认值；这些字段本身不表示 DNS 正在使用 Fake-IP。若导入时报“缺少前置代理组”，请在原始订阅 YAML 的 `proxy-groups` 中确认存在与节点 `dialer-proxy` 完全同名的 `🚀 前置节点池`；若缺失，检查本次转换实际加载的 `config` URL 是否指向包含该组的 INI，以及 Subconverter 是否成功取得该文件。仓库中的两份 INI 均应包含这个组。
 
-自建 Subconverter 镜像可将固定订阅配置的 `params.config` 设为 `config/all-online.ini`，直接读取镜像内文件；使用内网规则时设为 `config/new.ini`。改动 INI 后需要重新构建并部署镜像。外部 HTTPS 配置即使文件内容正确，Subconverter 无法获取或解析时仍可能继续生成缺少策略组的 YAML，因此链式代理场景建议使用镜像内路径。
+自建 Subconverter 镜像可将固定订阅配置的 `params.config` 设为 `config/all-online.ini`，直接读取镜像内文件；使用内网规则时设为 `config/new.ini`。改动 INI 后需要重新构建并部署镜像。若要代取其中的 HTTP(S) 规则集，还需把同一份 INI 以只读方式挂载到 Prefetch Proxy，并设置 `CONFIG_DIR`（见下文）。外部 HTTPS 配置会由 Prefetch Proxy 读取；请确保它能访问该地址。
 
 例如将使用 `new.ini` 内容的固定订阅改为：
 
@@ -204,6 +187,7 @@ include_check_YYYYMMDD_HHMMSS.report
        -> 特殊订阅：获取前置节点 -> 启动临时 Mihomo -> 获取真实订阅
        -> 可选：提取节点域名并更新规则文件
        -> 可选：注入私有节点
+       -> 可选：读取自定义 INI，改写 HTTP(S) ruleset，并代取规则文件
   -> Subconverter
   -> 转换结果
 ```
@@ -398,6 +382,7 @@ https://your-prefetch-proxy.example/sub?chaintoken=<令牌>&coverprofile=1
 | `PROXY_PORT` | `28080` | 临时 Mihomo SOCKS5 端口 |
 | `API_PORT` | `9090` | 临时 Mihomo Controller 端口 |
 | `INTERNAL_BASE_URL` | `http://prefetch-proxy:8080` | Subconverter 用来回读缓存和私有节点的容器内地址 |
+| `CONFIG_DIR` | 空 | 可选的 INI 共享目录根路径；设置后代理会读取此目录下的相对 `config` 路径 |
 | `RULE_LIST_PATH` | 空 | 节点域名 Rule List 的写入路径；为空时禁用 |
 | `FAKE_IP_FILTER_PATH` | 空 | 节点域名 Fake-IP Filter 的写入路径；为空时禁用 |
 | `PRIVATE_CONFIG_PATH` | 空 | 私有节点、组和密钥 YAML 路径；为空时禁用注入 |
@@ -405,6 +390,10 @@ https://your-prefetch-proxy.example/sub?chaintoken=<令牌>&coverprofile=1
 | `DEBUG` | `false` | 设为 `true` 输出调试日志及 Mihomo 日志 |
 
 `PROXY_PORT` 和 `API_PORT` 必须避免与容器内其他进程占用的端口冲突。`INTERNAL_BASE_URL` 必须是 Subconverter 容器能够访问的地址，不能填写客户端所见但容器无法访问的公网或宿主机地址。
+
+`/sub` 请求指定 HTTP(S) `config` 时，Prefetch Proxy 会读取 INI，将其中 `ruleset=策略组,http(s)://...` 的规则地址替换为短期内部地址，然后把改写后的 INI 地址交给 Subconverter。规则文件由 Prefetch Proxy 在 Subconverter 请求内部地址时获取。非 HTTP(S) 规则（如 `[]GEOIP`、`[]FINAL` 和本地路径）原样保留。配置来源无法读取时转换请求返回 502；规则来源无法读取时内部规则地址返回 502，Subconverter 可能仍生成缺少该规则的输出，因此应检查其日志。配置内部地址有效期为 10 分钟，规则内部地址有效期为 21 分钟；同一规则短链仅在前 10 分钟内复用，确保新配置引用的规则地址不会先于配置过期。
+
+若 `config=config/new.ini` 是 Subconverter 镜像内的相对路径，需让 Prefetch Proxy 也能读取同一份文件。例如将宿主机上的 `new.ini` 挂载为 `/shared-config/config/new.ini:ro`，并设置 `CONFIG_DIR=/shared-config`；请求中的 `config` 值仍为 `config/new.ini`。不设置 `CONFIG_DIR` 时，相对路径保持原样，由 Subconverter 自行读取，规则地址不会改写。修改共享 INI 时，请同时更新 Subconverter 镜像内的副本，或让两个容器共用同一只读文件。
 
 ## 本地开发
 

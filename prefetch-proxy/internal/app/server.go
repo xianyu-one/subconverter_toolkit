@@ -70,6 +70,8 @@ func (s *Service) Handler() (http.Handler, error) {
 	// 优先匹配精确路径：处理私有节点链式代理注入的请求
 	mux.HandleFunc("/internal/private", http.NotFound)
 	mux.HandleFunc("/internal/private/", s.handlePrivateNodes)
+	mux.HandleFunc("/internal/config/", s.handleInternalConfig)
+	mux.HandleFunc("/internal/ruleset/", s.handleInternalRuleset)
 
 	// 处理内部缓存请求短链，供 Subconverter 提取已经预获取好的节点数据
 	mux.HandleFunc("/internal/", s.handleInternalSub)

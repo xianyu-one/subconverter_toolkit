@@ -29,6 +29,7 @@ type Config struct {
 	PrivateConfigPath      string   // 包含私有节点、组和密钥的 YAML 路径
 	CoverProfileConfigPath string
 	CoverProfiles          *coverconfig.Config
+	ConfigDir              string // 可选：与 Subconverter 共享的本地 INI 目录
 }
 
 type Service struct {
@@ -37,6 +38,8 @@ type Service struct {
 	privateNodes *privateconfig.Config
 	privateLinks *privateconfig.LinkStore
 	lockMap      sync.Map
+	ruleLinksMu  sync.Mutex
+	ruleLinkIDs  map[string]rulesetLink
 	rules        *rules.Updater
 	prefetch     *prefetch.Client
 }
@@ -47,6 +50,7 @@ func NewService(cfg *Config, privateNodes *privateconfig.Config) *Service {
 		cache:        &CacheManager{items: make(map[string]CacheItem)},
 		privateNodes: privateNodes,
 		privateLinks: privateconfig.NewLinkStore(10*time.Minute, time.Now),
+		ruleLinkIDs:  make(map[string]rulesetLink),
 		rules:        &rules.Updater{RuleListPath: cfg.RuleListPath, FakeIPFilterPath: cfg.FakeIPFilterPath, Debug: cfg.Debug},
 	}
 	s.prefetch = prefetch.NewClient(prefetch.Config{MihomoPath: cfg.MihomoPath, ProxyPort: cfg.ProxyPort, ApiPort: cfg.ApiPort, Debug: cfg.Debug}, s.debugLog, maskLogURL)
@@ -118,6 +122,7 @@ func loadConfig() (*Config, *privateconfig.Config, error) {
 		FakeIPFilterPath:       getEnv("FAKE_IP_FILTER_PATH", ""),
 		PrivateConfigPath:      getEnv("PRIVATE_CONFIG_PATH", ""),
 		CoverProfileConfigPath: getEnv("COVER_PROFILE_CONFIG_PATH", ""),
+		ConfigDir:              getEnv("CONFIG_DIR", ""),
 	}
 	domains := getEnv("TARGET_DOMAINS", "")
 	if domains != "" {

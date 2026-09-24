@@ -52,6 +52,16 @@ func (s *Service) handleProxyRequest(w http.ResponseWriter, r *http.Request, pro
 		}
 		r.URL.RawQuery = query.Encode()
 	}
+	if r.URL.Path == "/sub" && query.Get("config") != "" && (httpURL(query.Get("config")) || s.cfg.ConfigDir != "") {
+		internalConfig, err := s.prepareConfig(r, query.Get("config"))
+		if err != nil {
+			log.Printf("处理配置文件失败 [%s]", maskLogURL(query.Get("config")))
+			http.Error(w, "Failed to prepare config", http.StatusBadGateway)
+			return
+		}
+		query.Set("config", internalConfig)
+		r.URL.RawQuery = query.Encode()
+	}
 	urlParam := query.Get("url")
 
 	s.debugLog("收到代理请求, Path: %s", r.URL.Path)
