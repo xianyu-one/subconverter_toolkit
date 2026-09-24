@@ -1,4 +1,4 @@
-FROM tindy2013/subconverter:latest
+FROM ghcr.io/metacubex/subconverter:latest
 
 COPY subconverter_server_conf/include /base/include
 COPY subconverter_server_conf/all_base.tpl /base/base/all_base.tpl
