@@ -29,12 +29,13 @@
 
 ## 自定义 Subconverter 镜像
 
-根目录的 `Dockerfile` 基于官方 `tindy2013/subconverter:latest`，将以下内容写入镜像：
+根目录的 `Dockerfile` 基于 `ghcr.io/metacubex/subconverter:latest`，将以下内容写入镜像：
 
 - `subconverter_server_conf/pref.toml`：Subconverter 服务端配置
 - `subconverter_server_conf/all_base.tpl`：各客户端的基础配置模板
 - `subconverter_server_conf/emoji.toml`：节点名称 Emoji 规则
 - `subconverter_server_conf/include/`：Clash/Mihomo 的 Fake-IP Filter 内容
+- `all-online.ini`、`new.ini`：镜像内的转换配置，分别位于 `config/all-online.ini`、`config/new.ini`
 
 仓库的 GitHub Actions 会在推送到 `main` 分支及每月定时任务中构建 `linux/amd64`、`linux/arm64` 镜像，并发布为：
 
@@ -92,9 +93,8 @@ https://your-subconverter.example/sub?target=clash&url=<订阅地址>&config=htt
 私有部署版本。在 `all-online.ini` 的基础上增加了：
 
 - 内网规则 `http://caddy-local/rule-list/xianyudomain.list`
-- `🔒 私有出口选择` 策略组
-- `🚀 前置节点池` 负载均衡策略组
-- 与 Prefetch Proxy 私有节点注入功能配套的链式代理策略
+
+`all-online.ini` 与 `new.ini` 都定义了 `🔒 私有出口选择` 和 `🚀 前置节点池`，以便两份配置都能接收 Prefetch Proxy 注入的私有节点。没有可用前置节点时，不要选择私有出口；Subconverter 对空策略组可能填入 `DIRECT`。
 
 这个文件依赖部署环境中的 `caddy-local` 主机名，并不适合直接在公共 Subconverter 实例上使用。使用前请修改其中的内网规则地址，确保 Subconverter 容器能够访问它。
 
@@ -105,6 +105,42 @@ https://your-prefetch-proxy.example/sub?target=clash&url=<订阅地址>&config=<
 ```
 
 Prefetch Proxy 会在转发前删除 `chaintoken`，不会将它传给 Subconverter。
+
+### Mihomo Redir-Host + TUN
+
+Clash 目标默认保留原有 Fake-IP 配置；在转换 URL 上添加 `clash.redir-host=1`，即可生成 Redir-Host + TUN + Sniffer 配置。该参数会直接启用 TUN，无须再加 `clash.tun-set=1`。原有 `clash.tun-set=1` 仍可单独启用 Fake-IP + TUN。
+
+```text
+https://your-prefetch-proxy.example/sub?target=clash&url=<订阅地址>&config=<new.ini 地址>&chaintoken=<令牌>&clash.redir-host=1
+```
+
+Redir-Host 返回真实 IP，允许 Android 私人 DNS 和浏览器安全 DNS 继续使用。进入 TUN 的普通 UDP/TCP 53 由内部 DNS 接管；客户端自己的 DoH/DoT/DoQ 是普通网络连接，不会被 `dns-hijack` 解密或替换。模板通过加密 DNS 解析节点域名，普通解析器通过当前 `🔰 节点选择` 策略组连接。为避免引导环路，节点域名的首次解析会以加密 DoH 直达固定解析器。直连流量使用单独的加密 DNS。
+
+`new.ini` 与 `all-online.ini` 在原分流规则之前，加入了常见加密 DNS 解析器地址及 DoT/DoQ、STUN/TURN 常用端口的优先代理规则。它们跟随 `🔰 节点选择`，因此该组应选中预期的链式出口，不要选中 `DIRECT`。这份示例列表无法识别所有使用 HTTPS/443 的自定义 DoH 或所有 WebRTC 服务；请把实际使用的解析器域名和 IP 补进两份 INI。Sniffer 用 HTTP/TLS/QUIC 中可见的域名辅助匹配规则，保留连接的原始目标 IP；关闭 Sniffer 后，普通 DNS、IP 连接与 `dialer-proxy` 建链仍可工作，部分只有 IP 的连接会失去域名规则匹配。
+
+检查 Redir-Host 时，请看**原始订阅 YAML** 的 `dns.enhanced-mode`，并确认没有输出 `fake-ip-range`、`fake-ip-filter` 等键。FlClash 展开的运行配置可能显示 Mihomo 的默认 DNS 字段，包括未启用的 Fake-IP 默认值；这些字段本身不表示 DNS 正在使用 Fake-IP。若导入时报“缺少前置代理组”，请在原始订阅 YAML 的 `proxy-groups` 中确认存在与节点 `dialer-proxy` 完全同名的 `🚀 前置节点池`；若缺失，检查本次转换实际加载的 `config` URL 是否指向包含该组的 INI，以及 Subconverter 是否成功取得该文件。仓库中的两份 INI 均应包含这个组。
+
+自建 Subconverter 镜像可将固定订阅配置的 `params.config` 设为 `config/all-online.ini`，直接读取镜像内文件；使用内网规则时设为 `config/new.ini`。改动 INI 后需要重新构建并部署镜像。外部 HTTPS 配置即使文件内容正确，Subconverter 无法获取或解析时仍可能继续生成缺少策略组的 YAML，因此链式代理场景建议使用镜像内路径。
+
+例如将使用 `new.ini` 内容的固定订阅改为：
+
+```yaml
+params:
+  target: clash
+  config: config/new.ini
+  clash.redir-host: '1'
+```
+
+启用前逐个平台检查运行中的最终配置：
+
+| 平台 | 检查项 |
+| --- | --- |
+| Nikki / OpenWrt | 检查其 UCI 覆写后的 DNS 模式、TUN、Sniffer、IPv4/IPv6 转发、LAN 接管与本模板一致。只对经旁路由的设备设置网关与 DNS；不要对整个局域网设置强制 DNS 劫持。 |
+| OpenClash / OpenWrt | 选择 `redir-host-tun` 运行模式，检查插件对 DNS、TUN、IPv6、Sniffer 的覆写。核实网关设备的防火墙和 IPv6 转发规则。 |
+| FlClash / Android | 启用 VPN/TUN 并核对应用覆盖范围；私人 DNS 的加密连接须进入 VPN。使用 Android 的常驻 VPN 和“阻止无 VPN 连接”处理客户端停止后的流量。 |
+| FlClash / Windows、Linux | 核对 TUN 实际启用和 DNS/路由覆写；Windows 使用严格路由，Linux 检查策略路由。若需要客户端停止后断网，须另设系统防火墙规则。 |
+
+IPv6 应在每个平台验证确实经代理出口；节点或客户端无法可靠转发 IPv6 时，应在该设备上阻断 IPv6，不能只关闭 DNS AAAA 回答。WebRTC 的网络出口可经 TUN 和优先规则约束，但浏览器暴露本地候选地址的行为仍需浏览器自身设置。建议实际测试 A/AAAA、UDP/TCP 53、所用 DoH/DoT/DoQ、WebRTC、节点故障与 TUN 退出后是否断网。详情及官方文档链接见[设计说明](docs/mihomo-redir-host-tun-design.md)。
 
 ## 规则列表
 
@@ -327,13 +363,14 @@ keys:
         upstreams: [first, second]
         params:
           target: clash
-          config: https://example.com/custom.ini
+          config: config/all-online.ini
           filename: abc
       "2":
         upstreams: [first, second, third]
         params:
           target: clash
-          exclude: "^test"
+          include: '(香港|日本)'
+          exclude: '(到期|剩余流量)'
 ```
 
 设置 `COVER_PROFILE_CONFIG_PATH=/run/secrets/cover-profiles.yaml`，并将两个文件以只读卷挂载。客户端使用：
@@ -341,6 +378,10 @@ keys:
 ```text
 https://your-prefetch-proxy.example/sub?chaintoken=<令牌>&coverprofile=1
 ```
+
+`params.include` 和 `params.exclude` 都是匹配**节点名称**的正则表达式字符串，分别表示只保留匹配的节点、排除匹配的节点。YAML 中直接写原始表达式，建议用单引号包住；不要预先做 URL 编码，也不要写成 YAML 列表。比如 `include: '(香港|日本)'` 表示名称含“香港”或“日本”，`exclude: '(到期|剩余流量)'` 表示排除名称含任一关键词的节点。如果名称必须同时含“香港”和“专线”，可写 `include: '(?=.*香港)(?=.*专线)'`，与两个词的先后顺序无关。正则里的 `|` 是“或”，不是上游订阅 `url` 的分隔符。
+
+文件中的表达式由 Prefetch Proxy 作为查询参数转发时自动 URL 编码；只有手工拼接 `/sub?...&include=...` 请求地址时，才需要对参数值做 URL 编码。`include`、`exclude` 各写一个字符串；需要多个备选关键词时在同一表达式中用 `|` 组合。它们与 `pref.toml` 中的 `include_remarks`、`exclude_remarks` 默认设置不同：这里的值属于单份固定订阅配置，并会作为请求参数覆盖 Subconverter 的对应默认值。
 
 请求中的 `url` 会整体替换配置中的上游列表；`target`、`config`、`exclude`、`include`、`filename` 等参数逐项覆盖文件默认值。显式空 `exclude=` 可清除文件值，空 `url=` 会报错。不带 `coverprofile` 的旧 `/sub` 请求继续使用客户端提供的参数。
 

@@ -8,7 +8,18 @@ mode: Rule
 log-level: {{ default(global.clash.log_level, "info") }}
 external-controller: :9090
 
-{% if default(request.clash.tun-set, "0") == "1" %}
+{% if request.target == "clash" and default(request.clash.redir-host, "0") == "1" %}
+ipv6: true
+tun:
+  enable: true
+  stack: mixed
+  auto-route: true
+  auto-detect-interface: true
+  strict-route: true
+  dns-hijack:
+    - any:53
+    - tcp://any:53
+{% else if default(request.clash.tun-set, "0") == "1" %}
 tun:
   auto-detect-interface: true
   auto-route: true
@@ -28,8 +39,44 @@ tun:
 {% else %}
 {% endif %}
 
-{% if request.target == "clash" or request.target == "clashr" %}
+{% if request.target == "clash" and default(request.clash.redir-host, "0") == "1" %}
+sniffer:
+  enable: true
+  force-dns-mapping: true
+  parse-pure-ip: true
+  override-destination: false
+  sniff:
+    HTTP:
+      ports: [80, 8080-8880]
+    TLS:
+      ports: [443, 8443]
+    QUIC:
+      ports: [443, 8443]
+{% endif %}
+
 dns:
+{% if request.target == "clash" and default(request.clash.redir-host, "0") == "1" %}
+  enable: true
+  listen: 127.0.0.1:1053
+  ipv6: true
+  enhanced-mode: redir-host
+  prefer-h3: false
+  respect-rules: true
+  use-hosts: true
+  use-system-hosts: true
+  default-nameserver:
+    - https://223.5.5.5/dns-query
+  proxy-server-nameserver:
+    - https://223.5.5.5/dns-query#DIRECT
+    - https://223.6.6.6/dns-query#DIRECT
+  direct-nameserver:
+    - https://223.5.5.5/dns-query#DIRECT
+    - https://223.6.6.6/dns-query#DIRECT
+  direct-nameserver-follow-policy: false
+  nameserver:
+    - 'https://1.1.1.1/dns-query#🔰 节点选择'
+    - 'https://8.8.8.8/dns-query#🔰 节点选择'
+{% else %}
   enable: true
   direct-nameserver-follow-policy: false
   listen: :53
@@ -96,8 +143,8 @@ dns:
       - +.googletagmanager.com
       - +.googletagservices.com
   fake-ip-filter:
-    {% include "include/cn-list.txt" %}
-    {% include "include/a-list.txt" %}
+{% include "include/cn-list.txt" %}
+{% include "include/a-list.txt" %}
 {% endif %}
 
 {% if local.clash.new_field_name == "true" %}

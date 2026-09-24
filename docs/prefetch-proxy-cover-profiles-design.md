@@ -42,10 +42,13 @@ keys:
         params:
           target: clash
           config: https://example.com/custom.ini
-          exclude: "^test"
+          include: '(香港|日本)'
+          exclude: '(到期|剩余流量)'
 ```
 
 `params` 是 Subconverter 参数名到字符串值的映射，允许日后新增参数，不限于 `target`、`config`、`exclude`、`include`、`filename`。`url` 由 `upstreams` 生成；`chaintoken` 与 `coverprofile` 只由 Prefetch Proxy 使用，不能写入 `params`。
+
+`include`、`exclude` 的值是匹配节点名称的正则表达式字符串：前者只保留匹配节点，后者排除匹配节点。YAML 中填写原始表达式，不要预先 URL 编码，也不能写成列表；建议使用单引号，避免正则中的反斜杠被 YAML 双引号当作转义字符。多个关键词任选其一时写 `include: '(香港|日本)'`；必须同时出现且不限定顺序时写 `include: '(?=.*香港)(?=.*专线)'`。`exclude: '(到期|剩余流量)'` 会排除名称含任一关键词的节点。Prefetch Proxy 在转发查询参数时会自动编码这些值；手写 `/sub` URL 时才需要编码。正则的 `|` 与上游 `url` 条目间的 `|` 分隔符用途不同。
 
 命名上游的值遵守 Subconverter 单个 `url` 条目的格式，包括它支持的订阅地址、节点分享链接等。多个条目按配置顺序用 `|` 组合；需要二次获取的 HTTP(S) 地址仍走现有预取流程。
 
