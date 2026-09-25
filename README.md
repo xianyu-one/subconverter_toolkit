@@ -22,6 +22,7 @@
 | `Dockerfile` | 构建自定义 Subconverter 镜像 |
 | `subconverter_server_conf/` | 服务端配置、基础模板、Emoji 规则和 Fake-IP Include 文件 |
 | `all-online.ini` | 仅依赖在线规则的转换配置 |
+| `lite-online.ini` | 在线规则的链式代理配置，直连例外之外统一使用私有出口 |
 | `new.ini` | 私有部署使用的转换配置，包含本地规则和链式代理策略组 |
 | `rule-list/` | 项目维护的规则列表 |
 | `check_include.py` | Include 文件格式与重复项检查工具 |
@@ -86,6 +87,14 @@ https://raw.githubusercontent.com/xianyu-one/subconverter-toolkit/main/all-onlin
 
 ```text
 https://your-subconverter.example/sub?target=clash&url=<订阅地址>&config=https%3A%2F%2Fraw.githubusercontent.com%2Fxianyu-one%2Fsubconverter-toolkit%2Fmain%2Fall-online.ini
+```
+
+### `lite-online.ini`
+
+链式代理专用的在线规则版本。它只沿用 `all-online.ini` 的 `DIRECT` 列表；未命中直连规则的流量进入 `PASSWALL`，默认通过 `🔰 节点选择` 使用 `🔒 私有出口选择`。`🔰 节点选择` 也提供手动选择、延迟最低和故障切换；另保留全球直连与全球拦截组。私有出口节点需由 Prefetch Proxy 通过 `chaintoken` 注入，并以 `dialer-proxy: 🚀 前置节点池` 连接前置节点。使用时将以下 Raw URL 作为 `config` 参数；自建镜像也可使用 `config/lite-online.ini`：
+
+```text
+https://raw.githubusercontent.com/xianyu-one/subconverter-toolkit/main/lite-online.ini
 ```
 
 
