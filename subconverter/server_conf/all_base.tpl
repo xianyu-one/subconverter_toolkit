@@ -8,6 +8,10 @@ mode: Rule
 log-level: {{ default(global.clash.log_level, "info") }}
 external-controller: :9090
 
+hosts:
+  "time.android.com": 203.107.6.88
+  "time.google.com": 203.107.6.88
+
 {% if request.target == "clash" and default(request.clash.redir-host, "0") == "1" %}
 ipv6: true
 tun:
