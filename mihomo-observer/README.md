@@ -47,6 +47,10 @@ Compose 將資料庫保存在 `observer_data` 命名卷，配置以唯讀檔案�
 | `GET /api/dashboard` | 今日已觀測連線與全局流量、近期問題、採集缺口 |
 | `GET /api/targets` | 有保留日統計的域名、IP-only 與目標 IP（最近 200 個） |
 | `GET /api/problems` | 最近七天達到門檻的證據與檢查方向 |
+| `GET /api/targets?page=1&sort=bytes&dir=desc` | 對全部目標排序後分頁（每頁 50 筆，返回 `items` 與 `total`） |
+| `GET /api/problems?page=1&sort=severity&dir=desc` | 對最近七天的全部問題證據排序後分頁 |
+| `GET /api/flows?mode=history&start_ms=...&end_ms=...` | 指定範圍的目標、代理路徑與已觀測流量；`mode=live` 查看最新活動連線 |
+| `GET /api/flow-samples?target=...&route_id=...&start_ms=...&end_ms=...&page=1` | 指定目標與路徑的原始連線樣本分頁，受原始資料保留期限制 |
 | `GET /api/details/{kind}/{value}` | `domain`、`ip_only`、`destination_ip`、`asn`、`proxy_path` 的小時/日趨勢、路徑、有限原始樣本及相關證據 |
 | `GET /api/history/{kind}/{value}?before_ms=...` | 以日期分頁的更早日統計；`before_ms` 為上一頁最早日期的毫秒時間戳 |
 | `GET /api/problem-history/{kind}/{value}?start_ms=...&end_ms=...` | 指定時間範圍內保存的問題 occurrence 摘要，最多返回 1000 筆 |
@@ -62,3 +66,29 @@ Compose 將資料庫保存在 `observer_data` 命名卷，配置以唯讀檔案�
 域名詳情的 `host`/`sniffHost` 來源摘要只使用仍在 Raw 保留期內的連線；Raw 到期後顯示未知，不從域名或 IP 猜測來源。
 
 實際 Mihomo 可能不提供請求成功、精確結束時間、握手時長或應用協議。問題頁只提示短時重複連線與足夠樣本下的 IPv4/IPv6 差異；不表示重試失敗、協議回退或需要改成 DIRECT。詳見 [實作說明](docs/phase-6-implementation.md)與[票據及驗收狀態](docs/tracer-bullets.md)。
+
+## 流向地圖與離線定位
+
+「流向地圖」顯示邏輯代理順序，可切換目前活動連線及歷史聚合、按目標和代理節點篩選。線條不是實際封包的物理路線；歷史連線數是時段統計合計，長連線可能跨時段重複計入。地理位置為估計，無法定位的節點和目標仍保留在文字鏈路中。
+
+Observer 與 Mihomo 可在不同設備上。地圖底圖來自打包的 [Natural Earth 公有領域資料](https://github.com/nvkelso/natural-earth-vector)，瀏覽器不載入第三方 CDN。將國家級或城市級 MMDB 放在 Observer 設備上，並在 `config.yaml` 的 `geoip.mmdb_path` 指定路徑；執行時不下載資料庫。`map.origin.country` 與 `map.origin.region` 使用 ISO 3166-1/2 代碼設定本機的大致起點。若某節點是中轉，使用 `map.nodes` 按 Mihomo 節點名稱分別設定 `entry_ip`、`exit_ip`，或 `entry_country`/`entry_region`、`exit_country`/`exit_region`。手工區域優先於 IP 的 GeoIP 結果。配置未提供可信出口時，出口位置保持未知；節點域名不重新解析成歷史地址。
+
+以下示例中的節點名和 IP 均為佔位值，須以自己的已知資料替換：
+
+```yaml
+geoip:
+  mmdb_path: /path/to/country.mmdb
+map:
+  origin:
+    country: TW
+    region: TW-TPE
+  nodes:
+    "example-relay":
+      entry_ip: 192.0.2.10
+      exit_country: US
+      exit_region: US-TX
+```
+
+Docker 部署時，需將 MMDB 檔案以唯讀方式掛載到容器，並將 `mmdb_path` 設成容器內路徑。GeoIP 不能從節點名稱或入口位址得知中轉的出口；示例 `192.0.2.10` 為文檔保留位址，無法用於實際定位。
+
+Mihomo `LoadBalance` 的底層撥號選擇不會逐連線出現在當前觀測資料中。Observer 低頻保存 `/proxies` 的候選關係；頁面列出當時候選節點，但會標明具體第一跳未知，不把候選當作已使用的節點。完整設計與驗收見[界面與鏈路地圖設計](docs/observer-ui-evolution.md)。

@@ -16,3 +16,12 @@ retention:
 web:
   listen: 127.0.0.1:8080
   password: change-this-password
+# Observer 所在設備上的離線 MMDB；留空時位置顯示未知。
+geoip:
+  mmdb_path: ""
+map:
+  origin:
+    country: "" # ISO 3166-1，例如 TW
+    region: ""  # ISO 3166-2，例如 TW-TPE
+  # 名稱須與 Mihomo /proxies 完全一致；入口與出口分開指定。
+  nodes: {}

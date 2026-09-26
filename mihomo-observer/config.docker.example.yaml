@@ -17,3 +17,10 @@ retention:
 web:
   listen: 0.0.0.0:8080
   password: change-this-password
+geoip:
+  mmdb_path: "" # 可將離線 MMDB 唯讀掛載到容器後填入容器內路徑
+map:
+  origin:
+    country: ""
+    region: ""
+  nodes: {}

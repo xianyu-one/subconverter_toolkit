@@ -46,7 +46,7 @@ func TestPageAndAssetsRequireAuthentication(t *testing.T) {
 	}
 	defer s.Close()
 	h := New(s, "secret", func() collector.Status { return collector.Status{} }).Handler()
-	for _, path := range []string{"/", "/assets/app.js", "/api/targets", "/api/history/domain/example.invalid", "/api/problem-history/domain/example.invalid?start_ms=1&end_ms=2"} {
+	for _, path := range []string{"/", "/assets/app.js", "/assets/world-map.js", "/assets/world.geojson", "/api/targets", "/api/targets?page=1&sort=bytes&dir=desc", "/api/flows?mode=history", "/api/history/domain/example.invalid", "/api/problem-history/domain/example.invalid?start_ms=1&end_ms=2"} {
 		r := httptest.NewRequest(http.MethodGet, path, nil)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
@@ -87,5 +87,10 @@ func TestRecentCollectionErrorHidesOldCurrentCount(t *testing.T) {
 	applyLiveInterruption(v, collector.Status{LastCommitMS: 102, LastReadErrorMS: 101, LastReadError: "controller status 401"})
 	if v["current_connections"] != 7 {
 		t.Fatalf("recovered count was hidden: %v", v)
+	}
+	v = map[string]any{"current_connections": 7, "as_of_ms": int64(100)}
+	applyLiveInterruption(v, collector.Status{})
+	if v["interruption_reason"] != "observer_restart" {
+		t.Fatalf("old snapshot after restart was not stale: %v", v)
 	}
 }

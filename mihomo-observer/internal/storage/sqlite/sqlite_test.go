@@ -158,6 +158,9 @@ func TestExistingVersionOneDatabaseMigrates(t *testing.T) {
 	if _, err = s.db.Exec("DROP TABLE target_changes"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = s.db.Exec("DROP TABLE proxy_topology"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = s.db.Exec("PRAGMA user_version=1"); err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +173,7 @@ func TestExistingVersionOneDatabaseMigrates(t *testing.T) {
 	}
 	defer s.Close()
 	var version int
-	if err = s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 2 {
+	if err = s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 3 {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 }

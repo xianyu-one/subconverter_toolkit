@@ -36,6 +36,25 @@ type Config struct {
 		Listen   string `yaml:"listen"`
 		Password string `yaml:"password"`
 	} `yaml:"web"`
+	GeoIP struct {
+		MMDBPath string `yaml:"mmdb_path"`
+	} `yaml:"geoip"`
+	Map struct {
+		Origin struct {
+			Country string `yaml:"country"`
+			Region  string `yaml:"region"`
+		} `yaml:"origin"`
+		Nodes map[string]NodeLocation `yaml:"nodes"`
+	} `yaml:"map"`
+}
+
+type NodeLocation struct {
+	EntryIP      string `yaml:"entry_ip"`
+	EntryCountry string `yaml:"entry_country"`
+	EntryRegion  string `yaml:"entry_region"`
+	ExitIP       string `yaml:"exit_ip"`
+	ExitCountry  string `yaml:"exit_country"`
+	ExitRegion   string `yaml:"exit_region"`
 }
 
 func Load(path string) (Config, error) {

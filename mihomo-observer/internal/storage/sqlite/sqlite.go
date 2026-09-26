@@ -48,7 +48,7 @@ func Open(path, zone string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	if version > 2 {
+	if version > 3 {
 		db.Close()
 		return nil, fmt.Errorf("unsupported schema version %d", version)
 	}
@@ -90,6 +90,30 @@ func Open(path, zone string) (*Store, error) {
 		}
 		if _, err = tx.Exec(string(ddl)); err == nil {
 			_, err = tx.Exec("PRAGMA user_version=2")
+		}
+		if err != nil {
+			tx.Rollback()
+			db.Close()
+			return nil, err
+		}
+		if err = tx.Commit(); err != nil {
+			db.Close()
+			return nil, err
+		}
+	}
+	if version <= 2 {
+		ddl, readErr := migrations.ReadFile("migrations/0003_proxy_topology.sql")
+		if readErr != nil {
+			db.Close()
+			return nil, readErr
+		}
+		tx, beginErr := db.Begin()
+		if beginErr != nil {
+			db.Close()
+			return nil, beginErr
+		}
+		if _, err = tx.Exec(string(ddl)); err == nil {
+			_, err = tx.Exec("PRAGMA user_version=3")
 		}
 		if err != nil {
 			tx.Rollback()

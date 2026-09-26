@@ -6,6 +6,7 @@ const number = new Intl.NumberFormat('zh-TW');
 const labels = {domain:'域名', ip_only:'僅 IP', destination_ip:'目標 IP', asn:'ASN', proxy_path:'代理路徑'};
 const problemLabels = {repeated_connections:'重複連線跡象', small_long_connections:'小流量長連線補充證據', ipv6_observation_difference:'值得檢查 IPv6 路徑'};
 let renderToken = 0;
+let flowTimer;
 
 function node(tag, className, content) {
   const element = document.createElement(tag);
@@ -39,8 +40,103 @@ function row(main, meta, value, href) {
   put(item,left,node('div','row-value',value)); return item;
 }
 function empty(message) { return node('p','empty',message); }
+function savedSort(key, fallback) {
+  try { const v = JSON.parse(localStorage.getItem(`observer.sort.${key}`)); return v && typeof v.field === 'string' && typeof v.desc === 'boolean' ? v : fallback; }
+  catch { return fallback; }
+}
+function saveSort(key, value) { try { localStorage.setItem(`observer.sort.${key}`, JSON.stringify(value)); } catch {} }
+function sortControls(key, fields, fallback, onChange) {
+  const state = savedSort(key, fallback);
+  if (!fields.some(f => f[0] === state.field)) Object.assign(state,fallback);
+  const wrap = node('div','sort-controls');
+  const label = node('label','sort-label','排序');
+  const select = node('select','sort-select'); select.setAttribute('aria-label',`${key}排序欄位`);
+  fields.forEach(([field,name]) => { const option = node('option','',name); option.value=field; select.append(option); });
+  select.value=state.field;
+  const direction=node('button','sort-direction',state.desc ? '降序 ↓' : '升序 ↑'); direction.type='button';
+  const reset=node('button','sort-reset','預設'); reset.type='button';
+  function change() { saveSort(key,state); direction.textContent=state.desc ? '降序 ↓' : '升序 ↑'; onChange(state); }
+  select.addEventListener('change',()=>{state.field=select.value;change();});
+  direction.addEventListener('click',()=>{state.desc=!state.desc;change();});
+  reset.addEventListener('click',()=>{Object.assign(state,fallback);select.value=state.field;change();});
+  put(label,select); put(wrap,label,direction,reset); return {element:wrap,state};
+}
+function compareValue(a,b) {
+  if (a === b) return 0;
+  if (a === null || a === undefined) return 1;
+  if (b === null || b === undefined) return -1;
+  if (typeof a === 'number' && typeof b === 'number') return a-b;
+  return String(a).localeCompare(String(b),'zh-Hant',{numeric:true,sensitivity:'base'});
+}
+function sortedPanel(section,key,items,fields,fallback,renderItem,emptyText,limitNote,pageSize=0) {
+  const body=node('div','sort-body'), pager=node('div','pager'); let page=1;
+  const {element,state}=sortControls(key,fields,fallback,()=>{page=1;draw();});
+  section.querySelector('.panel-head').append(element);
+  if (limitNote) section.append(node('p','row-meta',limitNote));
+  section.append(body); if (pageSize) section.append(pager);
+  function draw() {
+    body.replaceChildren(); pager.replaceChildren();
+    if (!items?.length) { body.append(empty(emptyText)); return; }
+    const ordered=[...items].sort((a,b)=>{
+      const field=fields.find(f=>f[0]===state.field);
+      const result=compareValue(field[2](a),field[2](b));
+      return (state.desc ? -result : result) || compareValue(JSON.stringify(a),JSON.stringify(b));
+    });
+    const pages=pageSize ? Math.ceil(ordered.length/pageSize) : 1;
+    page=Math.min(page,pages);
+    (pageSize ? ordered.slice((page-1)*pageSize,page*pageSize) : ordered).forEach(item=>body.append(renderItem(item)));
+    if (pages>1) {
+      const prev=node('button','filter','上一頁'),next=node('button','filter','下一頁');
+      prev.type=next.type='button';prev.disabled=page===1;next.disabled=page===pages;
+      prev.addEventListener('click',()=>{page--;draw();});next.addEventListener('click',()=>{page++;draw();});
+      put(pager,prev,node('span','row-meta',`第 ${page} / ${pages} 頁 · 共 ${number.format(ordered.length)} 條路徑`),next);
+    }
+  }
+  body.redraw=draw; draw(); return body;
+}
+function sortableTable(section,key,items,fields,fallback,cells) {
+  const wrap=node('div','table-wrap'), table=node('table'), head=node('tr'), body=node('tbody');
+  fields.forEach(f=>head.append(node('th','',f[1])));
+  put(table,put(node('thead'),head),body); wrap.append(table); section.append(wrap);
+  const {element,state}=sortControls(key,fields,fallback,draw); section.querySelector('.panel-head').append(element);
+  function draw() {
+    body.replaceChildren();
+    [...items].sort((a,b)=>{
+      const f=fields.find(x=>x[0]===state.field);
+      const c=compareValue(f[2](a),f[2](b));
+      return (state.desc?-c:c) || compareValue(JSON.stringify(a),JSON.stringify(b));
+    }).forEach(item=>{const tr=node('tr'); cells(item).forEach(v=>tr.append(node('td','',v)));body.append(tr);});
+  }
+  draw(); return wrap;
+}
+async function pagedPanel(section,key,endpoint,fields,fallback,renderItem,emptyText) {
+  const body=node('div','sort-body'), pager=node('div','pager'); let page=1, request=0;
+  const {element,state}=sortControls(key,fields,fallback,()=>{page=1;load();});
+  section.querySelector('.panel-head').append(element); put(section,body,pager);
+  async function load() {
+    const current=++request;
+    body.replaceChildren(node('p','loading','載入中…'));
+    try {
+      const params=new URLSearchParams({page:String(page),sort:state.field,dir:state.desc?'desc':'asc'});
+      const data=await get(`${endpoint}?${params}`);
+      if (current!==request || !section.isConnected) return;
+      body.replaceChildren(); pager.replaceChildren();
+      if (!data.items.length) body.append(empty(emptyText));
+      data.items.forEach(item=>body.append(renderItem(item)));
+      if (!data.total) return;
+      const totalPages=Math.max(1,Math.ceil(data.total/data.limit));
+      if (page>totalPages) {page=totalPages;load();return;}
+      const prev=node('button','filter','上一頁'), next=node('button','filter','下一頁');
+      prev.type=next.type='button'; prev.disabled=page<=1; next.disabled=page>=totalPages;
+      prev.addEventListener('click',()=>{page--;load();}); next.addEventListener('click',()=>{page++;load();});
+      put(pager,prev,node('span','row-meta',`第 ${page} / ${totalPages} 頁 · 共 ${number.format(data.total)} 筆`),next);
+    } catch (error) { if (current===request) body.replaceChildren(empty(error.message)); }
+  }
+  // The section is attached by its caller before this asynchronous request resolves.
+  load();
+}
 async function get(path) {
-  const response = await fetch(path,{cache:'no-store'});
+  const response = await fetch(new URL(path,location.origin),{cache:'no-store'});
   if (!response.ok) throw new Error(response.status === 401 ? '認證失敗，請重新登入。' : `資料讀取失敗（HTTP ${response.status}）。`);
   return response.json();
 }
@@ -82,8 +178,7 @@ async function dashboard(token) {
   content.append(metrics);
   const columns = node('div','two-column');
   const gaps = panel('採集缺口');
-  if (!data.recent_gaps?.length) gaps.append(empty('最近 7 日沒有已記錄的缺口。'));
-  else data.recent_gaps.forEach(g => gaps.append(row(when(g.started_at_ms),`${g.stream} · ${g.reason}${g.dropped_samples ? ` · 丟幀 ${g.dropped_samples}` : ''}`,g.ended_at_ms ? `至 ${when(g.ended_at_ms)}` : '仍在持續')));
+  sortedPanel(gaps,'gaps',data.recent_gaps,[["start","開始時間",g=>g.started_at_ms],["end","結束時間",g=>g.ended_at_ms],["reason","原因",g=>g.reason],["drops","丟幀數",g=>g.dropped_samples]],{field:'start',desc:true},g=>row(when(g.started_at_ms),`${g.stream} · ${g.reason}${g.dropped_samples ? ` · 丟幀 ${g.dropped_samples}` : ''}`,g.ended_at_ms ? `至 ${when(g.ended_at_ms)}` : '仍在持續'),'最近 7 日沒有已記錄的缺口。');
   const guide = panel('下一步');
   put(guide,row('查看目標','按完整域名或目標 IP 查看已觀測路徑','→','#/targets'),row('閱讀問題證據','計數與檢查方向由實際快照推導','→','#/problems'));
   if (status.collector?.read_errors) guide.append(row('Controller 讀取錯誤','連線或憑據可能需要檢查',number.format(status.collector.read_errors)));
@@ -92,13 +187,12 @@ async function dashboard(token) {
 
 async function targets(token) {
   setNav('targets'); statusNode.textContent = '歷史目標';
-  const data = await get('/api/targets'); if (token !== renderToken) return;
+  if (token !== renderToken) return;
   const content = document.createDocumentFragment();
   content.append(title('TARGETS / 02','已觀測目標','列出保留的日統計中存在的域名與 IP；不進行反向 DNS 猜測。','日統計歷史'));
   const section = panel('目標列表');
-  if (!data.length) section.append(empty('目前沒有可顯示的目標；等待快照和首次投影。'));
-  data.forEach(item => section.append(row(item.value,`${labels[item.kind] || item.kind} · 最後觀測 ${when(item.last_seen_at_ms)}`,`日計數合計 ${number.format(item.observed_connections)} · ${bytes(item.observed_upload_bytes + item.observed_download_bytes)}`,detailURL(item.kind,item.value))));
   content.append(section); app.replaceChildren(content);
+  pagedPanel(section,'targets','/api/targets',[["last_seen","最後觀測"],["name","名稱"],["kind","類型"],["connections","連線數"],["bytes","流量"]],{field:'last_seen',desc:true},item=>row(item.value,`${labels[item.kind] || item.kind} · 最後觀測 ${when(item.last_seen_at_ms)}`,`日計數合計 ${number.format(item.observed_connections)} · ${bytes(item.observed_upload_bytes + item.observed_download_bytes)}`,detailURL(item.kind,item.value)),'目前沒有可顯示的目標；等待快照和首次投影。');
 }
 
 function evidenceDetails(problem) {
@@ -131,13 +225,12 @@ function historyEntry(event) {
 }
 async function problems(token) {
   setNav('problems'); statusNode.textContent = '最近 7 日';
-  const data = await get('/api/problems'); if (token !== renderToken) return;
+  if (token !== renderToken) return;
   const content = document.createDocumentFragment();
   content.append(title('EVIDENCE / 03','問題證據','這些模式提示檢查方向；它們不是請求失敗或分流錯誤的判定。','最近 7 日'));
   const section = panel('達到門檻的觀測模式');
-  if (!data.length) section.append(empty('目前沒有達到展示門檻的問題證據。'));
-  data.forEach(p => section.append(evidenceDetails(p)));
   content.append(section); app.replaceChildren(content);
+  pagedPanel(section,'problems','/api/problems',[["severity","嚴重程度"],["last_seen","最近證據"],["target","目標"],["kind","類型"],["confidence","把握度"],["samples","樣本數"]],{field:'severity',desc:true},evidenceDetails,'目前沒有達到展示門檻的問題證據。');
 }
 
 function trendRows(items, granularity, gaps) {
@@ -164,12 +257,14 @@ function trendRows(items, granularity, gaps) {
   section.append(bars);
   if (gaps.length) {
     section.append(node('p','row-meta',`最近 30 日記錄 ${gaps.length} 個採集缺口；空白時段不可視為零流量。`));
-    gaps.slice(0,5).forEach(g => section.append(node('div','row-meta',`${when(g.started_at_ms)} 至 ${when(g.ended_at_ms)} · ${g.reason}`)));
+    const gapSection=node('section','comparison-subpanel');gapSection.append(put(node('div','panel-head'),node('h3','','近期採集缺口')));
+    sortedPanel(gapSection,'trend.gaps',gaps.slice(0,5),[["start","開始",g=>g.started_at_ms],["end","結束",g=>g.ended_at_ms],["reason","原因",g=>g.reason]],{field:'start',desc:true},g=>node('div','row-meta',`${when(g.started_at_ms)} 至 ${when(g.ended_at_ms)} · ${g.reason}`),'沒有缺口。','最多顯示 5 個近期缺口；排序僅作用於已載入結果。');
+    section.append(gapSection);
   }
-  const table = node('div','table-wrap'), t = node('table'), thead = node('thead'), tr = node('tr');
-  ['時間','連線','上傳','下載'].forEach(x => tr.append(node('th','',x))); thead.append(tr); t.append(thead);
-  const tbody = node('tbody'); ordered.reverse().slice(0,granularity === '每日' ? ordered.length : 80).forEach(([bucket,x]) => { const r = node('tr'); [when(bucket),x ? number.format(x.count) : '未知（缺口）',x ? bytes(x.up) : '未知',x ? bytes(x.down) : '未知'].forEach(v => r.append(node('td','',v))); tbody.append(r); });
-  t.append(tbody); table.append(t); section.append(table); return section;
+  const visible=[...ordered].reverse().slice(0,granularity === '每日' ? ordered.length : 80);
+  if (granularity==='小時' && ordered.length>80) section.append(node('p','row-meta','表格顯示最近 80 個小時；排序僅作用於已載入結果。'));
+  sortableTable(section,`trend.${granularity}`,visible,[["time","時間",r=>r[0]],["connections","連線",r=>r[1]?.count],["up","上傳",r=>r[1]?.up],["down","下載",r=>r[1]?.down]],{field:'time',desc:true},([bucket,x])=>[when(bucket),x ? number.format(x.count) : '未知（缺口）',x ? bytes(x.up) : '未知',x ? bytes(x.down) : '未知']);
+  return section;
 }
 async function detail(token, kind, value) {
   setNav(''); statusNode.textContent = labels[kind] || kind;
@@ -179,78 +274,71 @@ async function detail(token, kind, value) {
   const heading = kind === 'proxy_path' ? textOrUnknown(data.paths?.[0]?.rule) : value;
   const intro = kind === 'proxy_path' ? `路徑 #${value} · ${data.paths?.[0]?.rule_payload || '無規則載荷'} · ${Array.isArray(data.paths?.[0]?.chains) && data.paths[0].chains.length ? data.paths[0].chains.join(' → ') : '代理鏈未知'}` : '歷史資料按實際觀測路徑歸組；缺失欄位保持未知。';
   content.append(title(`${labels[kind] || kind} / DETAIL`,heading,intro,`最近 30 日 · ${data.hourly.length} 條小時統計`));
+  if (kind==='domain' || kind==='ip_only') content.append(link('在流向地圖查看此目標 →',`#/flows/${encodeURIComponent(value)}`));
   if (kind === 'domain') {
     const sources = panel('域名來源 · 原始資料保留期');
-    if (!data.observed_sources?.length) sources.append(empty('來源未知；原始記錄可能已過期。'));
-    data.observed_sources?.forEach(source => sources.append(row(source.source,`首次 ${when(source.first_seen_at_ms)} · 最近 ${when(source.last_seen_at_ms)}`,`${number.format(source.observed_connections)} 條`)));
+    sortedPanel(sources,`sources.${kind}`,data.observed_sources,[["source","來源",s=>s.source],["count","連線數",s=>s.observed_connections],["last","最近",s=>s.last_seen_at_ms]],{field:'source',desc:false},source=>row(source.source,`首次 ${when(source.first_seen_at_ms)} · 最近 ${when(source.last_seen_at_ms)}`,`${number.format(source.observed_connections)} 條`),'來源未知；原始記錄可能已過期。');
     content.append(sources);
   }
   const cols = node('div','two-column');
   const paths = panel('實際觀測路徑');
-  if (!data.paths.length) paths.append(empty('目前沒有路徑投影。'));
-  data.paths.forEach(p => paths.append(row(textOrUnknown(p.rule),`${p.rule_payload || '無規則載荷'} · ${Array.isArray(p.chains) && p.chains.length ? p.chains.join(' → ') : '鏈未知'}`,`#${p.id}`,kind === 'proxy_path' ? undefined : detailURL('proxy_path',String(p.id)))));
+  sortedPanel(paths,`paths.${kind}`,data.paths,[["id","路徑編號",p=>p.id],["rule","規則",p=>p.rule],["chain","代理鏈",p=>(p.chains||[]).join(' → ')]],{field:'id',desc:false},p=>row(textOrUnknown(p.rule),`${p.rule_payload || '無規則載荷'} · ${Array.isArray(p.chains) && p.chains.length ? [...p.chains].reverse().join(' → ') : '鏈未知'}`,`#${p.id}`,kind === 'proxy_path' ? undefined : detailURL('proxy_path',String(p.id))),'目前沒有路徑投影。','最多顯示 100 條路徑；排序僅作用於已載入結果。');
   const samples = panel('最近樣本');
-  if (!data.recent_samples.length) samples.append(empty('原始連線細節已過期或尚未採集；保留的日統計仍可查閱。'));
-  data.recent_samples.slice(0,12).forEach(s => {
+  sortedPanel(samples,`samples.${kind}`,data.recent_samples,[["last","最近觀測",s=>s.last_seen_at_ms],["first","首次觀測",s=>s.first_seen_at_ms],["target","目標",s=>s.target||s.destination_ip],["state","狀態",s=>s.state]],{field:'last',desc:true},s => {
+    const fragment=document.createDocumentFragment();
     const sample = row(s.target || s.destination_ip || '未知目標',`${s.target_source} · ${textOrUnknown(s.destination_ip)} · ${textOrUnknown(s.destination_asn)}`,`${s.state} · ${when(s.last_seen_at_ms)}`,s.target ? detailURL(s.target_kind,s.target) : undefined);
-    sample.classList.add('sample-row'); samples.append(sample);
-    if (s.destination_ip && kind !== 'destination_ip') samples.append(row('查看目標 IP',s.destination_ip,'→',detailURL('destination_ip',s.destination_ip)));
-  });
+    sample.classList.add('sample-row'); fragment.append(sample);
+    if (s.destination_ip && kind !== 'destination_ip') fragment.append(row('查看目標 IP',s.destination_ip,'→',detailURL('destination_ip',s.destination_ip)));
+    return fragment;
+  },'原始連線細節已過期或尚未採集；保留的日統計仍可查閱。','最近 30 筆樣本；排序僅作用於已載入結果。');
   put(cols,paths,samples); content.append(cols);
   if (kind === 'proxy_path') {
     const carried = panel('此路徑承載的目標');
-    if (!data.carried_targets?.length) carried.append(empty('目前沒有保留的目標聚合資料。'));
-    data.carried_targets?.forEach(t => carried.append(row(t.value,labels[t.kind] || t.kind,`日計數合計 ${number.format(t.observed_connections)} · ${bytes(t.observed_bytes)}`,detailURL(t.kind,t.value))));
+    sortedPanel(carried,'carried_targets',data.carried_targets,[["name","目標",t=>t.value],["kind","類型",t=>t.kind],["connections","連線數",t=>t.observed_connections],["bytes","流量",t=>t.observed_bytes]],{field:'connections',desc:true},t=>row(t.value,labels[t.kind] || t.kind,`日計數合計 ${number.format(t.observed_connections)} · ${bytes(t.observed_bytes)}`,detailURL(t.kind,t.value)),'目前沒有保留的目標聚合資料。','最多顯示 30 個目標；排序僅作用於已載入結果。');
     content.append(carried);
   }
   if (data.related_problems?.length) {
     const related = panel('關聯問題證據');
-    data.related_problems.forEach(p => related.append(row(problemLabels[p.kind] || p.kind,`${p.target} · 把握度 ${p.confidence}/3 · ${when(p.last_evidence_at_ms)}`,`${number.format(p.sample_count)} 樣本`,kind === 'proxy_path' ? detailURL(p.target_kind,p.target) : '#/problems')));
+    sortedPanel(related,`related.${kind}`,data.related_problems,[["last","最近證據",p=>p.last_evidence_at_ms],["target","目標",p=>p.target],["kind","類型",p=>p.kind],["confidence","把握度",p=>p.confidence],["samples","樣本數",p=>p.sample_count]],{field:'last',desc:true},p=>row(problemLabels[p.kind] || p.kind,`${p.target} · 把握度 ${p.confidence}/3 · ${when(p.last_evidence_at_ms)}`,`${number.format(p.sample_count)} 樣本`,kind === 'proxy_path' ? detailURL(p.target_kind,p.target) : '#/problems'),'沒有關聯問題。','最多顯示 30 筆；排序僅作用於已載入結果。');
     content.append(related);
     const comparisons = data.related_problems.filter(p => p.kind === 'ipv6_observation_difference');
     if (comparisons.length) {
       const comparison = panel('IPv4 / IPv6 可比樣本');
       comparisons.forEach(p => {
-        const e = p.evidence || {}, wrap = node('div','table-wrap'), table = node('table');
-        const head = node('tr'); ['版本','符合比較的連線','具觀測迹象的連線','覆蓋完整小時'].forEach(label => head.append(node('th','',label)));
-        table.append(put(node('thead'),head)); const body = node('tbody');
-        for (const version of ['ipv4','ipv6']) { const tr = node('tr'); [version.toUpperCase(),e[`${version}_eligible`] ?? '未知',e[`${version}_suspect`] ?? '未知',e[`${version}_observed_hours`] ?? '未知'].forEach(value => tr.append(node('td','',value))); body.append(tr); }
-        table.append(body); wrap.append(table); comparison.append(wrap);
-        comparison.append(node('p','row-meta',`域名來源 ${textOrUnknown(e.domain_source)} · 路徑 #${p.route_id}。這些是重複或小流量長連線跡象，不是失敗率或回退證明。`));
+        const e = p.evidence || {}, sub=node('section','comparison-subpanel');
+        sub.append(put(node('div','panel-head'),node('h3','',`路徑 #${p.route_id} 的版本對照`)));
+        sortableTable(sub,`ipv6.compare.${p.route_id}`,['ipv4','ipv6'],[["version","版本",v=>v],["eligible","符合比較的連線",v=>e[`${v}_eligible`]],["suspect","具觀測迹象的連線",v=>e[`${v}_suspect`]],["hours","覆蓋完整小時",v=>e[`${v}_observed_hours`]]],{field:'version',desc:false},v=>[v.toUpperCase(),e[`${v}_eligible`] ?? '未知',e[`${v}_suspect`] ?? '未知',e[`${v}_observed_hours`] ?? '未知']);
+        sub.append(node('p','row-meta',`域名來源 ${textOrUnknown(e.domain_source)}。這些是重複或小流量長連線跡象，不是失敗率或回退證明。`));
         const hours = new Map();
         data.hourly.filter(h => h.route_id === p.route_id && (h.ip_version === 4 || h.ip_version === 6)).forEach(h => {
           const current = hours.get(h.bucket_start_ms) || {4:null,6:null};
           current[h.ip_version] = (current[h.ip_version] || 0) + h.observed_connections; hours.set(h.bucket_start_ms,current);
         });
         if (hours.size) {
-          comparison.append(node('h3','', '同一路徑的小時趨勢'));
-          const trendTable = node('table'), trendHead = node('tr');
-          ['小時','IPv4 已觀測','IPv6 已觀測'].forEach(label => trendHead.append(node('th','',label)));
-          trendTable.append(put(node('thead'),trendHead)); const trendBody = node('tbody');
-          [...hours].sort((a,b) => b[0]-a[0]).slice(0,48).forEach(([bucket,counts]) => {
-            const tr = node('tr'); [when(bucket),counts[4] === null ? '未觀測' : number.format(counts[4]),counts[6] === null ? '未觀測' : number.format(counts[6])].forEach(v => tr.append(node('td','',v))); trendBody.append(tr);
-          });
-          trendTable.append(trendBody); comparison.append(put(node('div','table-wrap'),trendTable));
+          const hoursSection=node('section','comparison-subpanel');hoursSection.append(put(node('div','panel-head'),node('h3','','同一路徑的小時趨勢')));
+          sortableTable(hoursSection,`ipv6.hours.${p.route_id}`,[...hours].sort((a,b)=>b[0]-a[0]).slice(0,48),[["time","小時",x=>x[0]],["v4","IPv4 已觀測",x=>x[1][4]],["v6","IPv6 已觀測",x=>x[1][6]]],{field:'time',desc:true},([bucket,counts])=>[when(bucket),counts[4]===null?'未觀測':number.format(counts[4]),counts[6]===null?'未觀測':number.format(counts[6])]);
+          sub.append(hoursSection);
         }
+        comparison.append(sub);
       });
       content.append(comparison);
     }
   }
   let historyPanel;
-  let historyEmpty;
-  const seenHistory = new Set();
+  const seenHistory = new Set(), historyEvents=[];
+  let historyBody;
   function addHistory(events) {
-    events.forEach(event => { if (!seenHistory.has(event.id)) { seenHistory.add(event.id); historyPanel.append(historyEntry(event)); } });
-    if (seenHistory.size && historyEmpty) { historyEmpty.remove(); historyEmpty = null; }
+    events.forEach(event => { if (!seenHistory.has(event.id)) { seenHistory.add(event.id); historyEvents.push(event); } });
+    if (historyBody) historyBody.redraw();
   }
   if (kind === 'domain' || kind === 'ip_only' || kind === 'proxy_path') {
     historyPanel = panel('當時的問題摘要');
-    historyEmpty = empty('目前載入的日期沒有保留的問題證據。'); historyPanel.append(historyEmpty);
+    historyBody=sortedPanel(historyPanel,`history.${kind}`,historyEvents,[["time","時間",e=>e.window_start_ms],["target","目標",e=>e.target],["kind","類型",e=>e.kind],["samples","樣本數",e=>e.sample_count]],{field:'time',desc:true},historyEntry,'目前載入的日期沒有保留的問題證據。');
     addHistory(data.problem_history || []); content.append(historyPanel);
   }
   if (data.grouping_changes?.length) {
     const grouping = panel('目標歸組變更');
-    data.grouping_changes.forEach(change => grouping.append(row(`${change.from_value || '未知'} → ${change.to_value || '未知'}`,`${change.from_kind} → ${change.to_kind} · 來源 ${change.to_source}`,when(change.changed_at_ms),detailURL(change.to_kind,change.to_value))));
+    sortedPanel(grouping,`grouping.${kind}`,data.grouping_changes,[["time","變更時間",c=>c.changed_at_ms],["from","原目標",c=>c.from_value],["to","新目標",c=>c.to_value]],{field:'time',desc:true},change=>row(`${change.from_value || '未知'} → ${change.to_value || '未知'}`,`${change.from_kind} → ${change.to_kind} · 來源 ${change.to_source}`,when(change.changed_at_ms),detailURL(change.to_kind,change.to_value)),'沒有歸組變更。');
     content.append(grouping);
   }
   content.append(trendRows(data.hourly,'小時',data.gaps || []));
@@ -284,12 +372,127 @@ async function detail(token, kind, value) {
   app.replaceChildren(content);
 }
 
+function flowCard(item,range) {
+  const detail=node('details','flow-card'), summary=node('summary','flow-summary');
+  const total=(item.upload_bytes||0)+(item.download_bytes||0);
+  const lead=node('div','row-main');
+  put(lead,node('strong','',item.target||'未知目標'),node('span','row-meta',`${item.rule||'規則未知'} · ${when(item.last_seen_at_ms)}`));
+  const value=node('span','row-value',`${bytes(total)} · ${number.format(item.connections)} 筆`);
+  put(summary,lead,value); detail.append(summary);
+  const body=node('div','flow-body'),path=node('ol','hop-list');
+  (item.hops||[...(item.chains||[])].reverse().map(name=>({name}))).forEach(hop=>{
+    const locations=hop.locations||{}, entry=locations.entry, exit=locations.exit;
+    const li=node('li','',hop.name);
+    const notes=[];
+    if (entry) notes.push(`入口：${entry.label}（${entry.accuracy}，${entry.source}）`);
+    if (exit) notes.push(`出口：${exit.label}（${exit.accuracy}，${exit.source}）`);
+    if (!entry && !exit) notes.push('地理位置未知');
+    li.append(node('div','row-meta',notes.join(' · '))); path.append(li);
+  });
+  if (path.childNodes.length) body.append(path);
+  if (item.dialer_proxy) {
+    const candidates=node('details','candidate-list'), summary=node('summary','',`前置：${item.dialer_proxy} · 具體第一跳未知`);
+    candidates.append(summary);
+    const list=item.first_hop_candidates||[];
+    candidates.append(node('p','row-meta',`當時已知的拓撲版本始於 ${when(item.topology_at_ms)}。以下 ${number.format(list.length)} 個節點是候選，不能證明這條連線實際使用了哪一個。`));
+    const ul=node('ul','candidate-items');
+    const {element,state}=sortControls(`candidates.${item.dialer_proxy}`,[['name','節點名稱',x=>x]],{field:'name',desc:false},drawCandidates);
+    candidates.append(element,ul); body.append(candidates);
+    function drawCandidates() {ul.replaceChildren();[...list].sort((a,b)=>(state.desc?-1:1)*compareValue(a,b)).forEach(name=>ul.append(node('li','',name)));}
+    drawCandidates();
+  }
+  body.append(node('p','row-meta',`目標 IP：${item.destination_ip||'未知'} · 位置：${item.target_point?`${item.target_point.label}（${item.target_point.accuracy}，${item.target_point.source}）`:'未知'} · 路徑 #${item.route_id}`));
+  const actions=node('div','flow-actions'); actions.append(link('目標詳情 →',detailURL(item.target_kind,item.target))); actions.append(link('路徑詳情 →',detailURL('proxy_path',String(item.route_id))));
+  const samples=node('div','flow-samples'), samplePager=node('div','pager');
+  const button=node('button','filter','查看連線樣本'); button.type='button';
+  let samplePage=1,loaded=false;
+  const sampleSort=sortControls('flow.samples',[['time','最後觀測',s=>s.last_seen_at_ms],['bytes','流量',s=>s.upload_bytes+s.download_bytes],['state','狀態',s=>s.state],['ip','目標 IP',s=>s.destination_ip]],{field:'time',desc:true},()=>{if(loaded)loadSamples(1);});
+  async function loadSamples(page) {
+    button.disabled=true;button.textContent='載入中…';
+    try {
+      const params=new URLSearchParams({target:item.target,route_id:String(item.route_id),start_ms:String(range.start),end_ms:String(range.end),page:String(page),sort:sampleSort.state.field,dir:sampleSort.state.desc?'desc':'asc'});
+      const data=await get(`/api/flow-samples?${params}`);
+      loaded=true;samplePage=page;samples.replaceChildren();samplePager.replaceChildren();
+      if (!data.items.length) samples.append(node('p','row-meta','此時間範圍沒有保留的原始連線樣本；路徑聚合仍可查看。'));
+      data.items.forEach(s=>samples.append(row(when(s.last_seen_at_ms),`${s.state} · ${s.destination_ip||'目標 IP 未知'}`,bytes(s.upload_bytes+s.download_bytes))));
+      const totalPages=Math.max(1,Math.ceil(data.total/data.limit));
+      const prev=node('button','filter','上一頁'),next=node('button','filter','下一頁');
+      prev.type=next.type='button';prev.disabled=page<=1;next.disabled=page>=totalPages;
+      prev.addEventListener('click',()=>loadSamples(samplePage-1));next.addEventListener('click',()=>loadSamples(samplePage+1));
+      put(samplePager,prev,node('span','row-meta',`第 ${page} / ${totalPages} 頁 · 共 ${number.format(data.total)} 筆`),next);
+      button.remove();
+    } catch(error) {button.disabled=false;button.textContent='讀取失敗，重試樣本';samples.prepend(node('p','row-meta',error.message));}
+  }
+  button.addEventListener('click',()=>loadSamples(samplePage));
+  put(actions,button); put(body,actions,sampleSort.element,samples,samplePager); detail.append(body); return detail;
+}
+
+async function flowPage(token,initialTarget) {
+  setNav('flows'); statusNode.textContent='流向地圖';
+  const content=document.createDocumentFragment();
+  content.append(title('FLOWS / 04','流向地圖','線條表示已觀測的邏輯代理順序，地理位置是離線估計；不代表封包的物理路線。','即時與歷史'));
+  const toolbar=node('div','flow-toolbar');
+  const mode=node('select','filter'); mode.setAttribute('aria-label','資料模式');
+  [['history','歷史聚合'],['live','目前連線']].forEach(([v,l])=>{const o=node('option','',l);o.value=v;mode.append(o);});
+  const period=node('select','filter'); period.setAttribute('aria-label','歷史時間範圍');
+  [['24','最近 24 小時'],['168','最近 7 天'],['720','最近 30 天'],['custom','自訂時間']].forEach(([v,l])=>{const o=node('option','',l);o.value=v;period.append(o);});
+  const startInput=node('input','filter'),endInput=node('input','filter'); startInput.type=endInput.type='datetime-local'; startInput.setAttribute('aria-label','起始時間');endInput.setAttribute('aria-label','結束時間');
+  const apply=node('button','filter','套用時間'); apply.type='button';
+  const targetInput=node('input','filter'); targetInput.type='search'; targetInput.placeholder='篩選目標'; targetInput.value=initialTarget; targetInput.setAttribute('aria-label','篩選目標');
+  const nodeInput=node('input','filter'); nodeInput.type='search'; nodeInput.placeholder='篩選代理節點'; nodeInput.setAttribute('aria-label','篩選代理節點');
+  put(toolbar,mode,period,startInput,endInput,apply,targetInput,nodeInput); content.append(toolbar);
+  const mapPanel=panel('全球路徑'); mapPanel.classList.add('map-panel');
+  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg'); svg.classList.add('world-map');
+  const mapInfo=node('p','map-info','讀取本地地圖資料…'); put(mapPanel,svg,mapInfo); content.append(mapPanel);
+  const routePanel=panel('連線與路徑'); content.append(routePanel);
+  const routeItems=[]; let currentRange={start:Date.now()-86400000,end:Date.now()};
+  const routeBody=sortedPanel(routePanel,'flows',routeItems,[["bytes","流量",f=>f.upload_bytes+f.download_bytes],["last","最後觀測",f=>f.last_seen_at_ms],["target","目標",f=>f.target],["connections","連線數",f=>f.connections],["route","路徑編號",f=>f.route_id]],{field:'bytes',desc:true},f=>flowCard(f,currentRange),'此範圍沒有已觀測的連線。',null,50);
+  app.replaceChildren(content);
+  const geo=await WorldMap.load(); if (token!==renderToken) return;
+  let latest=[],origin=null,fetchSerial=0,geoVersion='',geoProblem='',dailyRounded=false;
+  function range() {
+    const now=Date.now();
+    if (mode.value==='live') return {start:now-86400000,end:now};
+    if (period.value!=='custom') return {start:now-Number(period.value)*3600000,end:now};
+    const start=new Date(startInput.value).getTime(),end=new Date(endInput.value).getTime();
+    if (!Number.isFinite(start)||!Number.isFinite(end)||end<=start) throw new Error('請輸入有效的起始和結束時間。');
+    return {start,end};
+  }
+  function showCustom() {const custom=period.value==='custom' && mode.value==='history';startInput.hidden=endInput.hidden=apply.hidden=!custom;period.hidden=mode.value==='live';}
+  function filterDraw() {
+    const target=targetInput.value.trim().toLocaleLowerCase(),proxy=nodeInput.value.trim().toLocaleLowerCase();
+    const filtered=latest.filter(f=>(!target||f.target.toLocaleLowerCase().includes(target)) && (!proxy||(f.chains||[]).some(n=>n.toLocaleLowerCase().includes(proxy))||(f.first_hop_candidates||[]).some(n=>n.toLocaleLowerCase().includes(proxy))));
+    routeItems.splice(0,routeItems.length,...filtered);routeBody.redraw();
+    const count=WorldMap.draw(svg,geo,filtered,origin,selected=>{targetInput.value=selected;filterDraw();});
+    mapInfo.textContent=`${number.format(filtered.length)} 條目 · ${number.format(count.edges)} 段可定位關聯 · ${number.format(count.points)} 個地理點${geoVersion?` · MMDB ${geoVersion}`:geoProblem?` · ${geoProblem}`:' · 未配置 MMDB'}。未知位置與第一跳見下方列表。歷史位置以目前資料重新估計。${dailyRounded?'此範圍使用每日統計，起始日期按完整報表日計入。':''}`;
+  }
+  async function refresh() {
+    if (token!==renderToken) return;
+    const id=++fetchSerial;
+    try {
+      currentRange=range();
+      const params=new URLSearchParams({mode:mode.value,start_ms:String(currentRange.start),end_ms:String(currentRange.end)});
+      const data=await get(`/api/flows?${params}`); if(id!==fetchSerial||token!==renderToken)return;
+      latest=data.items||[];origin=data.origin;geoVersion=data.geoip_version||'';geoProblem=data.geoip_error||'';dailyRounded=!!data.range_rounded_to_day;
+      statusNode.textContent=data.interruption_reason ? `採集已過期 · ${when(data.as_of_ms)}` : data.as_of_ms ? `資料時間 ${when(data.as_of_ms)}` : '尚未採集';
+      filterDraw();
+    } catch(error) { if(id===fetchSerial) {statusNode.textContent='流向資料讀取失敗';mapInfo.textContent=error.message;} }
+  }
+  showCustom();
+  mode.addEventListener('change',()=>{showCustom();refresh();});period.addEventListener('change',()=>{showCustom();if(period.value!=='custom')refresh();});apply.addEventListener('click',refresh);
+  targetInput.addEventListener('input',filterDraw);nodeInput.addEventListener('input',filterDraw);
+  await refresh();
+  flowTimer=setInterval(()=>{if(mode.value==='live') refresh();},2000);
+}
+
 async function render() {
   const token = ++renderToken;
+  if (flowTimer) { clearInterval(flowTimer); flowTimer=undefined; }
   app.replaceChildren(node('div','loading','正在讀取觀測資料…'));
   const parts = (location.hash || '#/').slice(2).split('/');
   try {
     if (parts[0] === 'targets') await targets(token);
+    else if (parts[0] === 'flows') await flowPage(token,parts.length>1?decodeURIComponent(parts.slice(1).join('/')):'');
     else if (parts[0] === 'problems') await problems(token);
     else if (parts[0] === 'detail' && parts.length >= 3) await detail(token,decodeURIComponent(parts[1]),decodeURIComponent(parts.slice(2).join('/')));
     else await dashboard(token);

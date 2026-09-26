@@ -9,9 +9,14 @@
   --color-accent-soft: oklch(94% 0.025 256);
   --color-warning: oklch(57% 0.13 65);
   --color-warning-soft: oklch(96% 0.025 65);
-  --font-display: "Space Grotesk", "Noto Sans TC", system-ui, sans-serif;
-  --font-body: "Inter", "Noto Sans TC", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --color-map-ocean: oklch(95% 0.011 247);
+  --color-map-land: oklch(87% 0.019 245);
+  --color-map-grid: oklch(82% 0.017 245);
+  --color-map-edge: oklch(51% 0.19 256);
+  --color-map-point: oklch(43% 0.18 255);
+  --font-display: system-ui, "Noto Sans TC", sans-serif;
+  --font-body: system-ui, "Noto Sans TC", sans-serif;
+  --font-mono: ui-monospace, "Noto Sans Mono", monospace;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -26,5 +31,6 @@
   --radius-medium: 10px;
   --rule-thin: 1px solid var(--color-rule);
   --dur-fast: 140ms;
+  --dur-medium: 240ms;
   --ease-standard: ease;
 }

@@ -115,6 +115,63 @@ func (c *Collector) fetch(ctx context.Context) (mihomo.Frame, error) {
 	return frame, nil
 }
 
+func (c *Collector) fetchTopology(ctx context.Context) {
+	u, err := url.Parse(c.base)
+	if err != nil {
+		return
+	}
+	u.Path = strings.TrimRight(u.Path, "/") + "/proxies"
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return
+	}
+	if c.secret != "" {
+		req.Header.Set("Authorization", "Bearer "+c.secret)
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return
+	}
+	var data struct {
+		Proxies map[string]struct {
+			Type        string   `json:"type"`
+			DialerProxy string   `json:"dialer-proxy"`
+			Now         string   `json:"now"`
+			All         []string `json:"all"`
+		} `json:"proxies"`
+	}
+	if err = json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&data); err != nil || data.Proxies == nil {
+		return
+	}
+	topology := make(map[string]storage.ProxyInfo, len(data.Proxies))
+	for name, p := range data.Proxies {
+		topology[name] = storage.ProxyInfo{Type: p.Type, DialerProxy: p.DialerProxy, Now: p.Now, All: p.All}
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err = c.store.RecordTopology(writeCtx, time.Now().UnixMilli(), topology); err != nil {
+		slog.Error("proxy topology commit failed", "error", err)
+	}
+}
+
+func (c *Collector) runTopology(ctx context.Context) {
+	c.fetchTopology(ctx)
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			c.fetchTopology(ctx)
+		}
+	}
+}
+
 type item struct {
 	frame   mihomo.Frame
 	broken  bool
@@ -124,6 +181,7 @@ type item struct {
 
 func (c *Collector) Run(ctx context.Context) {
 	c.fetchVersion(ctx)
+	go c.runTopology(ctx)
 	mailbox := make(chan item, 1)
 	done := make(chan struct{})
 	go func() {

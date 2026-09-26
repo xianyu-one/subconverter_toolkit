@@ -14,6 +14,7 @@ import (
 	"mihomo-observer/internal/api"
 	"mihomo-observer/internal/collector"
 	"mihomo-observer/internal/config"
+	"mihomo-observer/internal/geo"
 	"mihomo-observer/internal/storage/sqlite"
 )
 
@@ -31,6 +32,15 @@ func main() {
 		os.Exit(1)
 	}
 	defer store.Close()
+	locator, err := geo.Open(cfg)
+	if err != nil {
+		slog.Error("geolocation failed", "error", err)
+		os.Exit(1)
+	}
+	defer locator.Close()
+	if locator.Problem() != "" {
+		slog.Warn("offline GeoIP unavailable", "reason", locator.Problem())
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	var workers sync.WaitGroup
@@ -87,7 +97,7 @@ func main() {
 		}
 	}()
 	slog.Info("observer API listening", "address", cfg.Web.Listen)
-	err = api.Serve(ctx, cfg.Web.Listen, api.New(store, cfg.Web.Password, c.Status).Handler())
+	err = api.Serve(ctx, cfg.Web.Listen, api.New(store, cfg.Web.Password, c.Status, locator).Handler())
 	stop()
 	workers.Wait()
 	if err != nil {
