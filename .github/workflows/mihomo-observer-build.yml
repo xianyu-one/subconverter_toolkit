@@ -1,0 +1,54 @@
+name: Mihomo Observer Docker Build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "mihomo-observer/Dockerfile"
+      - "mihomo-observer/.dockerignore"
+      - "mihomo-observer/go.mod"
+      - "mihomo-observer/go.sum"
+      - "mihomo-observer/cmd/**"
+      - "mihomo-observer/internal/**"
+      - ".github/workflows/mihomo-observer-build.yml"
+  pull_request:
+    paths:
+      - "mihomo-observer/Dockerfile"
+      - "mihomo-observer/.dockerignore"
+      - "mihomo-observer/go.mod"
+      - "mihomo-observer/go.sum"
+      - "mihomo-observer/cmd/**"
+      - "mihomo-observer/internal/**"
+      - ".github/workflows/mihomo-observer-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push mihomo-observer
+        uses: docker/build-push-action@v6
+        with:
+          context: ./mihomo-observer
+          file: ./mihomo-observer/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            mrxianyu/mihomo-observer:latest
+            mrxianyu/mihomo-observer:sha-${{ github.sha }}

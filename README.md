@@ -1,6 +1,6 @@
 # Subconverter Toolkit
 
-一套围绕 [Subconverter](https://github.com/tindy2013/subconverter) 和 [Mihomo](https://github.com/MetaCubeX/mihomo) 构建的订阅转换工具集，包含自定义转换镜像、Clash/Mihomo 配置模板、规则集、Include 检查工具，以及用于处理特殊订阅的预取代理。
+一套围绕 [Subconverter](https://github.com/tindy2013/subconverter) 和 [Mihomo](https://github.com/MetaCubeX/mihomo) 构建的工具集，包含自定义转换镜像、Clash/Mihomo 配置模板、规则集、Include 检查工具、订阅预取代理和连接观测器。
 
 本项目主要面向自建服务。请妥善保护订阅地址、鉴权令牌和私有节点文件，不要将包含敏感信息的配置提交到公开仓库。
 
@@ -14,36 +14,40 @@
 - 通过前置节点获取需要二次请求的真实订阅
 - 从订阅节点中提取域名，追加到 Rule List 和 Fake-IP Filter
 - 向转换请求中按需注入私有节点，并生成链式代理配置
+- 采集 Mihomo Controller 的连接快照，查看目标、路径、问题和历史趋势
 
 ## 项目结构
 
 | 路径 | 用途 |
 | --- | --- |
-| `Dockerfile` | 构建自定义 Subconverter 镜像 |
-| `subconverter_server_conf/` | 服务端配置、基础模板、Emoji 规则和 Fake-IP Include 文件 |
-| `all-online.ini` | 仅依赖在线规则的转换配置 |
-| `lite-online.ini` | 在线规则的链式代理配置，直连例外之外统一使用私有出口 |
-| `new.ini` | 私有部署使用的转换配置，包含本地规则和链式代理策略组 |
+| `subconverter/` | 自定义 Subconverter 镜像、转换 INI、服务端模板和 Include 检查工具 |
+| `subconverter/all-online.ini` | 仅依赖在线规则的转换配置 |
+| `subconverter/lite-online.ini` | 在线规则的链式代理配置，直连例外之外统一使用私有出口 |
 | `rule-list/` | 项目维护的规则列表 |
-| `check_include.py` | Include 文件格式与重复项检查工具 |
 | `prefetch-proxy/` | Subconverter 前置代理，用于二次订阅、域名提取和私有节点注入 |
+| `mihomo-observer/` | Mihomo 连接快照采集、SQLite 历史分析与受保护的浏览器界面 |
+| `tests/` | 跨组件配置契约测试 |
 
 ## 自定义 Subconverter 镜像
 
-根目录的 `Dockerfile` 基于 `ghcr.io/metacubex/subconverter:latest`，将以下内容写入镜像：
+`subconverter/Dockerfile` 基于 `ghcr.io/metacubex/subconverter:latest`，将以下内容写入镜像：
 
-- `subconverter_server_conf/pref.toml`：Subconverter 服务端配置
-- `subconverter_server_conf/all_base.tpl`：各客户端的基础配置模板
-- `subconverter_server_conf/emoji.toml`：节点名称 Emoji 规则
-- `subconverter_server_conf/include/`：Clash/Mihomo 的 Fake-IP Filter 内容
-- `all-online.ini`、`new.ini`：镜像内的转换配置，分别位于 `config/all-online.ini`、`config/new.ini`
+- `subconverter/server_conf/pref.toml`：Subconverter 服务端配置
+- `subconverter/server_conf/all_base.tpl`：各客户端的基础配置模板
+- `subconverter/server_conf/emoji.toml`：节点名称 Emoji 规则
+- `subconverter/server_conf/include/`：Clash/Mihomo 的 Fake-IP Filter 内容
+- `subconverter/all-online.ini`、`subconverter/lite-online.ini`：镜像内的转换配置，分别位于 `config/all-online.ini`、`config/lite-online.ini`
 
-仓库的 GitHub Actions 会在推送到 `main` 分支及每月定时任务中构建 `linux/amd64`、`linux/arm64` 镜像，并发布为：
+构建命令：`docker build -t subconverter:local ./subconverter`。私有部署若需要 `new.ini`，请自行准备并挂载为容器内的 `/base/config/new.ini`；仓库没有该文件，公开镜像不会打包它。
+
+`subconverter/` 中的 Dockerfile、INI、服务端配置或对应工作流发生变更并推送到 `main` 时，GitHub Actions 构建 `linux/amd64`、`linux/arm64` 镜像并发布为：
 
 ```text
 mrxianyu/subconverter:latest
 mrxianyu/subconverter:<上游 Subconverter 版本>
 ```
+
+相关 PR 仅构建验证，不发布；也可手动运行工作流。月度定时重建已移除，避免仓库内容没有相关变更时重复构建。
 
 ### 直接运行
 
@@ -80,23 +84,24 @@ http://localhost:25500/sub?target=clash&url=<URL 编码后的订阅地址>&confi
 使用时，将文件的 Raw URL 作为 Subconverter 的 `config` 参数：
 
 ```text
-https://raw.githubusercontent.com/xianyu-one/subconverter-toolkit/main/all-online.ini
+https://raw.githubusercontent.com/xianyu-one/subconverter-toolkit/main/subconverter/all-online.ini
 ```
 
 示例：
 
 ```text
-https://your-subconverter.example/sub?target=clash&url=<订阅地址>&config=https%3A%2F%2Fraw.githubusercontent.com%2Fxianyu-one%2Fsubconverter-toolkit%2Fmain%2Fall-online.ini
+https://your-subconverter.example/sub?target=clash&url=<订阅地址>&config=https%3A%2F%2Fraw.githubusercontent.com%2Fxianyu-one%2Fsubconverter-toolkit%2Fmain%2Fsubconverter%2Fall-online.ini
 ```
 
 ### `lite-online.ini`
 
-链式代理专用的在线规则版本。它只沿用 `all-online.ini` 的 `DIRECT` 列表；未命中直连规则的流量进入 `PASSWALL`，默认通过 `🔰 节点选择` 使用 `🔒 私有出口选择`。`🔰 节点选择` 也提供手动选择、延迟最低和故障切换；另保留全球直连与全球拦截组。私有出口节点需由 Prefetch Proxy 通过 `chaintoken` 注入，并以 `dialer-proxy: 🚀 前置节点池` 连接前置节点。使用时将以下 Raw URL 作为 `config` 参数；自建镜像也可使用 `config/lite-online.ini`：
+链式代理专用的在线规则版本。它沿用 `all-online.ini` 的 `DIRECT` 列表；未命中直连规则的流量进入 `🛫 PASSWALL`，再由 `🔰 节点选择` 选择手动、延迟最低、故障切换或 `🔒 私有出口选择`。私有出口节点需由 Prefetch Proxy 通过 `chaintoken` 注入，并以 `dialer-proxy: 🚀 前置节点池` 连接前置节点。使用时将以下 Raw URL 作为 `config` 参数；自建镜像也可使用 `config/lite-online.ini`：
 
 ```text
-https://raw.githubusercontent.com/xianyu-one/subconverter-toolkit/main/lite-online.ini
+https://raw.githubusercontent.com/xianyu-one/subconverter-toolkit/main/subconverter/lite-online.ini
 ```
 
+原先指向仓库根目录的两个 Raw URL 在目录迁移后需要改为以上路径；已有固定订阅地址也应同步更新。
 
 ### Mihomo Redir-Host + TUN
 
@@ -108,13 +113,13 @@ https://your-prefetch-proxy.example/sub?target=clash&url=<订阅地址>&config=<
 
 Redir-Host 返回真实 IP，允许 Android 私人 DNS 和浏览器安全 DNS 继续使用。进入 TUN 的普通 UDP/TCP 53 由内部 DNS 接管；客户端自己的 DoH/DoT/DoQ 是普通网络连接，不会被 `dns-hijack` 解密或替换。模板通过加密 DNS 解析节点域名，普通解析器通过当前 `🔰 节点选择` 策略组连接。为避免引导环路，节点域名的首次解析会以加密 DoH 直达固定解析器。直连流量使用单独的加密 DNS。
 
-`new.ini` 与 `all-online.ini` 在原分流规则之前，加入了常见加密 DNS 解析器地址及 DoT/DoQ、STUN/TURN 常用端口的优先代理规则。它们跟随 `🔰 节点选择`，因此该组应选中预期的链式出口，不要选中 `DIRECT`。这份示例列表无法识别所有使用 HTTPS/443 的自定义 DoH 或所有 WebRTC 服务；请把实际使用的解析器域名和 IP 补进两份 INI。Sniffer 用 HTTP/TLS/QUIC 中可见的域名辅助匹配规则，保留连接的原始目标 IP；关闭 Sniffer 后，普通 DNS、IP 连接与 `dialer-proxy` 建链仍可工作，部分只有 IP 的连接会失去域名规则匹配。
+`all-online.ini` 在原分流规则之前，加入了常见加密 DNS 解析器地址及 DoT/DoQ、STUN/TURN 常用端口的优先代理规则。它们跟随 `🔰 节点选择`，因此该组应选中预期的链式出口，不要选中 `DIRECT`。这份示例列表无法识别所有使用 HTTPS/443 的自定义 DoH 或所有 WebRTC 服务；请把实际使用的解析器域名和 IP 补进配置。Sniffer 用 HTTP/TLS/QUIC 中可见的域名辅助匹配规则，保留连接的原始目标 IP；关闭 Sniffer 后，普通 DNS、IP 连接与 `dialer-proxy` 建链仍可工作，部分只有 IP 的连接会失去域名规则匹配。
 
 检查 Redir-Host 时，请看**原始订阅 YAML** 的 `dns.enhanced-mode`，并确认没有输出 `fake-ip-range`、`fake-ip-filter` 等键。FlClash 展开的运行配置可能显示 Mihomo 的默认 DNS 字段，包括未启用的 Fake-IP 默认值；这些字段本身不表示 DNS 正在使用 Fake-IP。若导入时报“缺少前置代理组”，请在原始订阅 YAML 的 `proxy-groups` 中确认存在与节点 `dialer-proxy` 完全同名的 `🚀 前置节点池`；若缺失，检查本次转换实际加载的 `config` URL 是否指向包含该组的 INI，以及 Subconverter 是否成功取得该文件。仓库中的两份 INI 均应包含这个组。
 
-自建 Subconverter 镜像可将固定订阅配置的 `params.config` 设为 `config/all-online.ini`，直接读取镜像内文件；使用内网规则时设为 `config/new.ini`。改动 INI 后需要重新构建并部署镜像。若要代取其中的 HTTP(S) 规则集，还需把同一份 INI 以只读方式挂载到 Prefetch Proxy，并设置 `CONFIG_DIR`（见下文）。外部 HTTPS 配置会由 Prefetch Proxy 读取；请确保它能访问该地址。
+自建 Subconverter 镜像可将固定订阅配置的 `params.config` 设为 `config/all-online.ini` 或 `config/lite-online.ini`，直接读取镜像内文件。若使用自行维护的 `new.ini`，先将它挂载到容器内的 `config/new.ini`。改动已打包的 INI 后需要重新构建并部署镜像。若要代取其中的 HTTP(S) 规则集，还需把同一份 INI 以只读方式挂载到 Prefetch Proxy，并设置 `CONFIG_DIR`（见下文）。外部 HTTPS 配置会由 Prefetch Proxy 读取；请确保它能访问该地址。
 
-例如将使用 `new.ini` 内容的固定订阅改为：
+例如自行准备并挂载 `new.ini` 后，可将固定订阅设为：
 
 ```yaml
 params:
@@ -132,7 +137,7 @@ params:
 | FlClash / Android | 启用 VPN/TUN 并核对应用覆盖范围；私人 DNS 的加密连接须进入 VPN。使用 Android 的常驻 VPN 和“阻止无 VPN 连接”处理客户端停止后的流量。 |
 | FlClash / Windows、Linux | 核对 TUN 实际启用和 DNS/路由覆写；Windows 使用严格路由，Linux 检查策略路由。若需要客户端停止后断网，须另设系统防火墙规则。 |
 
-IPv6 应在每个平台验证确实经代理出口；节点或客户端无法可靠转发 IPv6 时，应在该设备上阻断 IPv6，不能只关闭 DNS AAAA 回答。WebRTC 的网络出口可经 TUN 和优先规则约束，但浏览器暴露本地候选地址的行为仍需浏览器自身设置。建议实际测试 A/AAAA、UDP/TCP 53、所用 DoH/DoT/DoQ、WebRTC、节点故障与 TUN 退出后是否断网。详情及官方文档链接见[设计说明](docs/mihomo-redir-host-tun-design.md)。
+IPv6 应在每个平台验证确实经代理出口；节点或客户端无法可靠转发 IPv6 时，应在该设备上阻断 IPv6，不能只关闭 DNS AAAA 回答。WebRTC 的网络出口可经 TUN 和优先规则约束，但浏览器暴露本地候选地址的行为仍需浏览器自身设置。建议实际测试 A/AAAA、UDP/TCP 53、所用 DoH/DoT/DoQ、WebRTC、节点故障与 TUN 退出后是否断网。详情及官方文档链接见[设计说明](subconverter/docs/mihomo-redir-host-tun-design.md)。
 
 ## 规则列表
 
@@ -155,7 +160,7 @@ DOMAIN,api.example.net
 
 ## Include 文件检查工具
 
-`check_include.py` 用来检查 `subconverter_server_conf/include/` 一类 YAML 列表文件。它仅依赖 Python 3.9+ 标准库，会扫描所选目录第一层的所有 `.txt` 文件并检查：
+`subconverter/check_include.py` 用来检查 `subconverter/server_conf/include/` 一类 YAML 列表文件。它仅依赖 Python 3.9+ 标准库，会扫描所选目录第一层的所有 `.txt` 文件并检查：
 
 - LF、CRLF 和孤立 CR 换行
 - 文件末尾是否存在换行符
@@ -166,13 +171,13 @@ DOMAIN,api.example.net
 运行：
 
 ```bash
-python3 check_include.py
+python3 subconverter/check_include.py
 ```
 
 按照提示输入目录；在支持 GNU Readline 的环境中可以使用 Tab 补全：
 
 ```text
-subconverter_server_conf/include
+subconverter/server_conf/include
 ```
 
 检查结果会显示在终端，并在被检查目录生成带时间戳的完整报告：
@@ -209,7 +214,7 @@ docker build -t prefetch-proxy:latest ./prefetch-proxy
 
 当前 `prefetch-proxy/Dockerfile` 内置的是 Mihomo `v1.18.2` 的 `linux-amd64` 二进制，因此该镜像当前只适合 AMD64 环境。若要部署到 ARM64，需要调整 Mihomo 下载目标。
 
-仓库的 `Prefetch Proxy Docker Build` 工作流会在相关 PR 上验证镜像构建；相关变更进入 `main`、每月定时或手动触发时，会使用现有的 `DOCKERHUB_USERNAME` 与 `DOCKERHUB_TOKEN` 仓库密钥发布 `mrxianyu/prefetch-proxy:latest` 和对应的 `sha-<提交 SHA>` 标签。该工作流仅构建 `linux/amd64`。
+仓库的 `Prefetch Proxy Docker Build` 工作流会在相关 PR 上验证镜像构建；`prefetch-proxy/` 中的 Dockerfile、Go 源码与依赖或对应工作流的变更进入 `main`，或手动触发时，会使用现有的 `DOCKERHUB_USERNAME` 与 `DOCKERHUB_TOKEN` 仓库密钥发布 `mrxianyu/prefetch-proxy:latest` 和对应的 `sha-<提交 SHA>` 标签。该工作流仅构建 `linux/amd64`。
 
 ### 与 Subconverter 一起运行
 
@@ -328,7 +333,7 @@ http://localhost:25500/sub?target=clash&url=<订阅地址>&config=<new.ini 地�
 
 私有节点通过每次请求生成的随机内部地址提供，地址只允许读取该密钥选中的节点，10 分钟后失效；固定的 `/internal/private` 已移除。缺少 `chaintoken` 时正常转换，错误令牌返回 HTTP 403。令牌不会转发给 Subconverter。配置仅在启动时读取，修改后须重启；未设置 `PRIVATE_CONFIG_PATH` 时，私有节点功能关闭。
 
-请将含真实令牌和节点密码的配置文件保留在仓库外，并以只读卷挂载。配置格式和校验规则详见 [设计文档](docs/prefetch-proxy-private-config-design.md)。
+请将含真实令牌和节点密码的配置文件保留在仓库外，并以只读卷挂载；部署前按上面的示例核对配置格式。
 
 ### 固定订阅配置
 
@@ -378,7 +383,7 @@ https://your-prefetch-proxy.example/sub?chaintoken=<令牌>&coverprofile=1
 
 请求中的 `url` 会整体替换配置中的上游列表；`target`、`config`、`exclude`、`include`、`filename` 等参数逐项覆盖文件默认值。显式空 `exclude=` 可清除文件值，空 `url=` 会报错。不带 `coverprofile` 的旧 `/sub` 请求继续使用客户端提供的参数。
 
-多个上游中只要有一个提供可解析节点即可继续转换；全部失败时返回错误，私有节点不计入成功上游。代理会跳过预取失败的上游；普通上游的部分失败依赖后端 Subconverter 启用 `skip_failed_links = true`，本仓库提供的 `pref.toml` 已启用。完整格式及错误行为见[固定订阅配置设计](docs/prefetch-proxy-cover-profiles-design.md)。
+多个上游中只要有一个提供可解析节点即可继续转换；全部失败时返回错误，私有节点不计入成功上游。代理会跳过预取失败的上游；普通上游的部分失败依赖后端 Subconverter 启用 `skip_failed_links = true`，本仓库提供的 `pref.toml` 已启用。完整格式及错误行为见[固定订阅配置设计](prefetch-proxy/docs/prefetch-proxy-cover-profiles-design.md)。
 
 ### 环境变量
 
@@ -402,7 +407,23 @@ https://your-prefetch-proxy.example/sub?chaintoken=<令牌>&coverprofile=1
 
 `/sub` 请求指定 HTTP(S) `config` 时，Prefetch Proxy 会读取 INI，将其中 `ruleset=策略组,http(s)://...` 的规则地址替换为短期内部地址，然后把改写后的 INI 地址交给 Subconverter。规则文件由 Prefetch Proxy 在 Subconverter 请求内部地址时获取。非 HTTP(S) 规则（如 `[]GEOIP`、`[]FINAL` 和本地路径）原样保留。配置来源无法读取时转换请求返回 502；规则来源无法读取时内部规则地址返回 502，Subconverter 可能仍生成缺少该规则的输出，因此应检查其日志。配置内部地址有效期为 10 分钟，规则内部地址有效期为 21 分钟；同一规则短链仅在前 10 分钟内复用，确保新配置引用的规则地址不会先于配置过期。
 
-若 `config=config/new.ini` 是 Subconverter 镜像内的相对路径，需让 Prefetch Proxy 也能读取同一份文件。例如将宿主机上的 `new.ini` 挂载为 `/shared-config/config/new.ini:ro`，并设置 `CONFIG_DIR=/shared-config`；请求中的 `config` 值仍为 `config/new.ini`。不设置 `CONFIG_DIR` 时，相对路径保持原样，由 Subconverter 自行读取，规则地址不会改写。修改共享 INI 时，请同时更新 Subconverter 镜像内的副本，或让两个容器共用同一只读文件。
+若自行准备的 `new.ini` 以 `config/new.ini` 挂载到 Subconverter，需让 Prefetch Proxy 也能读取同一份文件。例如将宿主机上的 `new.ini` 再挂载为 `/shared-config/config/new.ini:ro`，并设置 `CONFIG_DIR=/shared-config`；请求中的 `config` 值仍为 `config/new.ini`。不设置 `CONFIG_DIR` 时，相对路径保持原样，由 Subconverter 自行读取，规则地址不会改写。修改共享 INI 时，请同时更新两个容器的挂载文件。
+
+## Mihomo Observer
+
+`mihomo-observer/` 从指定的 FlClash/Mihomo Controller 采集连接快照，保存 SQLite 历史，并通过 Basic Auth 保护的浏览器界面展示 Dashboard、目标、路径、问题与趋势。使用方式、配置示例及当前验收边界见 [Mihomo Observer README](mihomo-observer/README.md)。
+
+本地构建：
+
+```bash
+docker build -t mihomo-observer:local ./mihomo-observer
+```
+
+`mihomo-observer/` 中的 Dockerfile、Go 源码与依赖、嵌入式网页资源或对应工作流发生变更并推送到 `main` 时，GitHub Actions 构建 `linux/amd64`、`linux/arm64` 镜像，发布 `mrxianyu/mihomo-observer:latest` 和 `sha-<提交 SHA>`。相关 PR 仅构建验证，也可手动触发。
+
+## GitHub Actions 触发范围
+
+三个镜像工作流各自只监听会进入镜像的所属组件文件及本工作流文件。修改 `subconverter/` 中的 INI 只会触发 Subconverter 构建；只修改 `rule-list/`、文档或其他组件不会触发无关镜像。PR 只验证构建，`main` 推送和手动触发才发布镜像；手动触发是显式重建入口。
 
 ## 本地开发
 
@@ -419,6 +440,12 @@ go vet ./...
 ```bash
 cd prefetch-proxy
 go build ./...
+```
+
+检查跨组件转换配置契约：
+
+```bash
+python3 -m unittest discover -s tests
 ```
 
 ## 说明

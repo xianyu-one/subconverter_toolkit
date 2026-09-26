@@ -1,0 +1,7 @@
+.git
+data
+*.db
+*.db-shm
+*.db-wal
+config.yaml
+config.docker.yaml

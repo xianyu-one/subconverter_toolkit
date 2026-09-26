@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Mihomo Observer</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">◎</span><span>Mihomo Observer</span></div>
+    <nav aria-label="主要導覽"><a href="#/" data-nav="dashboard">總覽</a><a href="#/targets" data-nav="targets">目標</a><a href="#/problems" data-nav="problems">問題證據</a></nav>
+    <div id="live-status" class="live-status">讀取中</div>
+  </header>
+  <main id="app" tabindex="-1"><div class="loading">正在讀取觀測資料…</div></main>
+  <footer>僅呈現已觀測資料。請結合實際使用情況判斷分流。</footer>
+</body>
+</html>

@@ -1,0 +1,19 @@
+mihomo:
+  # This address must be reachable from the container; a host-only 127.0.0.1 listener is not.
+  api: http://192.0.2.10:9090
+  secret: ""
+database:
+  path: /data/observer.db
+reporting_timezone: Asia/Taipei
+collector:
+  enabled: true
+  interval_ms: 1000
+analyzer:
+  enabled: true
+retention:
+  raw_connections_days: 14
+  hourly_stats_days: 180
+  daily_stats_days: 0
+web:
+  listen: 0.0.0.0:8080
+  password: change-this-password

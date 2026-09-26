@@ -4,14 +4,22 @@ on:
   push:
     branches: [main]
     paths:
-      - "prefetch-proxy/**"
+      - "prefetch-proxy/Dockerfile"
+      - "prefetch-proxy/.dockerignore"
+      - "prefetch-proxy/go.mod"
+      - "prefetch-proxy/go.sum"
+      - "prefetch-proxy/*.go"
+      - "prefetch-proxy/internal/**"
       - ".github/workflows/prefetch-proxy-build.yml"
   pull_request:
     paths:
-      - "prefetch-proxy/**"
+      - "prefetch-proxy/Dockerfile"
+      - "prefetch-proxy/.dockerignore"
+      - "prefetch-proxy/go.mod"
+      - "prefetch-proxy/go.sum"
+      - "prefetch-proxy/*.go"
+      - "prefetch-proxy/internal/**"
       - ".github/workflows/prefetch-proxy-build.yml"
-  schedule:
-    - cron: "0 0 1 * *"
   workflow_dispatch:
 
 permissions:

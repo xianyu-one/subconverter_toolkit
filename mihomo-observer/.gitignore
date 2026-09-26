@@ -1,0 +1,6 @@
+config.yaml
+config.docker.yaml
+*.db
+*.db-shm
+*.db-wal
+/mihomo-observer

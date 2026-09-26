@@ -5,7 +5,7 @@
 ## 已确定的目标与边界
 
 - `all_base.tpl` 新增 URL 参数选择 Redir-Host，保留现有 Fake-IP 默认行为。新方案启用 TUN 与 Sniffer，并继续支持 `dialer-proxy` 注入的前置节点与单个落地节点。
-- 保留 `new.ini`、`all-online.ini` 现有分流组与 `DIRECT` 规则；仅允许在两者前部增加少量加密 DNS 与 WebRTC 的优先代理规则，指向 `🔰 节点选择`。
+- 保留公开的 `all-online.ini` 与自行维护的 `new.ini` 原有分流组和 `DIRECT` 规则；仅允许在规则前部增加少量加密 DNS 与 WebRTC 的优先代理规则，指向 `🔰 节点选择`。
 - 客户端可继续使用 Android 私人 DNS 或浏览器安全 DNS。进入 TUN 的普通 DNS 由内部 DNS 接管；客户端自身的 DoH/DoT/DoQ 连接按流量处理，针对明确列出的解析器强制走主代理组。
 - 节点域名和 DNS 服务引导解析使用固定 IP 的加密 DNS，避免通过 `system` 或明文 DNS 引导。引导连接可以直达解析器；其他解析请求按预期代理出口处理。
 - 可靠性、隐私优先。节点、DNS 或 TUN 失败时不自动回退直连。IPv6 无法可靠经代理转发时阻断 IPv6。

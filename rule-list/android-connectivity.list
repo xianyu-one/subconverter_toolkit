@@ -1,0 +1,8 @@
+DOMAIN,connectivitycheck.gstatic.com
+DOMAIN,www.google.com
+DOMAIN,play.googleapis.com
+# China SIM / regional NetworkStack
+DOMAIN,connectivitycheck.gstatic.cn
+# Legacy Android compatibility
+DOMAIN,clients3.google.com
+DOMAIN,connectivitycheck.android.com

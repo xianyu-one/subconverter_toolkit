@@ -1,0 +1,12 @@
+services:
+  observer:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./config.docker.yaml:/etc/observer/config.yaml:ro
+      - observer_data:/data
+
+volumes:
+  observer_data:

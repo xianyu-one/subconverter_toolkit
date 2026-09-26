@@ -1,0 +1,30 @@
+:root {
+  --color-paper: oklch(98.5% 0.004 250);
+  --color-surface: oklch(100% 0.003 250);
+  --color-ink: oklch(24% 0.02 258);
+  --color-body: oklch(36% 0.018 257);
+  --color-muted: oklch(57% 0.015 257);
+  --color-rule: oklch(89% 0.012 252);
+  --color-accent: oklch(56% 0.20 256);
+  --color-accent-soft: oklch(94% 0.025 256);
+  --color-warning: oklch(57% 0.13 65);
+  --color-warning-soft: oklch(96% 0.025 65);
+  --font-display: "Space Grotesk", "Noto Sans TC", system-ui, sans-serif;
+  --font-body: "Inter", "Noto Sans TC", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --text-small: 0.8rem;
+  --text-body: 0.95rem;
+  --text-title: clamp(1.65rem, 3vw, 2.5rem);
+  --radius-small: 6px;
+  --radius-medium: 10px;
+  --rule-thin: 1px solid var(--color-rule);
+  --dur-fast: 140ms;
+  --ease-standard: ease;
+}
