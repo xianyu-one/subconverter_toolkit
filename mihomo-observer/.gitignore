@@ -4,3 +4,5 @@ config.docker.yaml
 *.db-shm
 *.db-wal
 /mihomo-observer
+/dist/
+/.env

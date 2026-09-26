@@ -1,0 +1,24 @@
+[Unit]
+Description=Mihomo Observer
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=mihomo-observer
+Group=mihomo-observer
+Environment=MIHOMO_OBSERVER_CONFIG=/etc/mihomo-observer/config.yaml
+ExecStart=/usr/local/bin/mihomo-observer
+WorkingDirectory=/var/lib/mihomo-observer
+StateDirectory=mihomo-observer
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

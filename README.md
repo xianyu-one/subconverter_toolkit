@@ -411,15 +411,15 @@ https://your-prefetch-proxy.example/sub?chaintoken=<令牌>&coverprofile=1
 
 ## Mihomo Observer
 
-`mihomo-observer/` 从指定的 FlClash/Mihomo Controller 采集连接快照，保存 SQLite 历史，并通过 Basic Auth 保护的浏览器界面展示 Dashboard、目标、路径、问题与趋势。使用方式、配置示例及当前验收边界见 [Mihomo Observer README](mihomo-observer/README.md)。
+`mihomo-observer/` 从指定的 FlClash/Mihomo Controller 采集连接快照，保存 SQLite 历史，并通过 Basic Auth 保护的浏览器界面展示 Dashboard、目标、路径、问题与趋势。使用方式及当前验收边界见 [Mihomo Observer README](mihomo-observer/README.md)；Docker、systemd、OpenWrt procd 部署和交叉编译见[部署指南](mihomo-observer/docs/deployment.md)。
 
 本地构建：
 
 ```bash
-docker build -t mihomo-observer:local ./mihomo-observer
+make -C mihomo-observer docker
 ```
 
-`mihomo-observer/` 中的 Dockerfile、Go 源码与依赖、嵌入式网页资源或对应工作流发生变更并推送到 `main` 时，GitHub Actions 构建 `linux/amd64`、`linux/arm64` 镜像，发布 `mrxianyu/mihomo-observer:latest` 和 `sha-<提交 SHA>`。相关 PR 仅构建验证，也可手动触发。
+`mihomo-observer/` 中的 Dockerfile、Makefile、Go 源码与依赖、嵌入式网页资源或对应工作流发生变更并推送到 `main` 时，GitHub Actions 通过 Make 构建 `linux/amd64`、`linux/arm64` 镜像，发布 `mrxianyu/mihomo-observer:latest` 和 `sha-<提交 SHA>`。相关 PR 仅构建验证，也可手动触发。
 
 ## GitHub Actions 触发范围
 

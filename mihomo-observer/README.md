@@ -10,6 +10,8 @@
 go run ./cmd/mihomo-observer -config config.yaml
 ```
 
+也可執行 `make build` 產生 `dist/mihomo-observer`，或用 `MIHOMO_OBSERVER_CONFIG=/路徑/config.yaml ./dist/mihomo-observer` 指定配置檔。顯式 `-config` 優先於環境變數。Makefile 提供 Docker 與 Linux、OpenWrt、Windows 交叉編譯目標；完整命令見[部署與編譯指南](docs/deployment.md)。
+
 瀏覽器打開 `http://127.0.0.1:8080/`，以 HTTP Basic Auth 的 `admin` 和 `web.password` 登入。預設只監聽本機。Controller 若只監聽 `127.0.0.1:9090`，Observer 必須在同一台主機原生運行。
 
 ## Linux Docker
@@ -18,11 +20,17 @@ go run ./cmd/mihomo-observer -config config.yaml
 
 1. 複製 `config.docker.example.yaml` 為 `config.docker.yaml`，填入容器可達的 Controller 地址、Mihomo secret 和 Web 密碼。示例中的 `192.0.2.10` 是文檔佔位位址，必須替換。
 2. 確認 `database.path` 為 `/data/observer.db`，`web.listen` 為 `0.0.0.0:8080`，配置文件可供容器內的 `observer` 用戶讀取。
-3. 執行 `docker compose up -d --build`，並以 `curl -u admin:密碼 http://127.0.0.1:8080/api/dashboard` 核對資料。
+3. 執行 `docker compose up -d --build`，並以 `curl -u admin:密碼 http://127.0.0.1:8080/api/dashboard` 核對資料。若只需本機鏡像，可單獨執行 `make docker`。
 
-Compose 將資料庫保存在 `observer_data` 命名卷，配置以唯讀檔案掛載；重建容器不會刪除卷。`docker compose down` 不會刪除卷；使用 `down -v` 會刪除歷史資料。映射埠預設只綁主機回環。若需要遠端瀏覽，請使用 TLS 反向代理或可信網路保護 Basic Auth；裸 HTTP 會暴露憑據。不要把 secret 寫進映像或公開日誌。
+Compose 將資料庫保存在 `observer_data` 命名卷，配置以唯讀檔案掛載；重建容器不會刪除卷。`docker compose down` 不會刪除卷；使用 `down -v` 會刪除歷史資料。可設定 `OBSERVER_CONFIG_FILE` 指定宿主機配置檔，並設定 `MIHOMO_OBSERVER_CONFIG` 指定容器內掛載路徑；Compose 會把兩者對應起來。映射埠預設只綁主機回環。若需要遠端瀏覽，請使用 TLS 反向代理或可信網路保護 Basic Auth；裸 HTTP 會暴露憑據。不要把 secret 寫進映像或公開日誌。詳見[部署與編譯指南](docs/deployment.md)。
+
+## Linux systemd 與 OpenWrt init
+
+倉庫提供 [systemd unit](deploy/systemd/mihomo-observer.service)、[OpenWrt procd init 腳本](deploy/openwrt/mihomo-observer.init)及各自的配置樣本。普通 Linux 客戶端可將資料庫交由 systemd 的 `StateDirectory` 管理；OpenWrt 範例透過 UCI 選擇配置路徑，並建議將 SQLite 放在持久掛載磁碟。安裝、權限設定、啟動與查詢日誌步驟見[部署與編譯指南](docs/deployment.md)。
 
 ## Windows 原生運行
+
+在 Linux/macOS 上也可執行 `make windows-amd64`，取得 `dist/mihomo-observer-windows-amd64.exe`。
 
 在 Linux/macOS 交叉編譯時執行 `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o mihomo-observer.exe ./cmd/mihomo-observer`；在 Windows PowerShell 原生編譯時執行 `$env:CGO_ENABLED="0"; go build -o mihomo-observer.exe ./cmd/mihomo-observer`。將 `config.example.yaml` 複製到執行檔同目錄，填入同機 FlClash Controller 的 `http://127.0.0.1:9090`、secret、Web 密碼，以及可寫的絕對資料庫路徑，例如 `C:\Users\你的使用者\AppData\Local\MihomoObserver\observer.db`；先建立資料夾。以 `mihomo-observer.exe -config config.yaml` 啟動。關閉視窗或按 Ctrl+C 後可再次啟動；同一資料庫會保留歷史。Controller 關閉或 secret 錯誤時，`/api/status` 的讀取錯誤數增加，Dashboard 會顯示目前連線數未知；日誌只列 HTTP 狀態或連線錯誤，不輸出 secret。
 

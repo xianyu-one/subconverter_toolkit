@@ -1,0 +1,18 @@
+mihomo:
+  api: http://127.0.0.1:9090
+  secret: ""
+database:
+  path: /var/lib/mihomo-observer/observer.db
+reporting_timezone: Asia/Taipei
+collector:
+  enabled: true
+  interval_ms: 1000
+analyzer:
+  enabled: true
+retention:
+  raw_connections_days: 14
+  hourly_stats_days: 180
+  daily_stats_days: 0
+web:
+  listen: 127.0.0.1:8080
+  password: change-this-password

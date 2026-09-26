@@ -18,7 +18,7 @@ import (
 )
 
 func main() {
-	path := flag.String("config", "config.yaml", "configuration file")
+	path := flag.String("config", defaultConfigPath(), "configuration file (default: MIHOMO_OBSERVER_CONFIG or config.yaml)")
 	flag.Parse()
 	cfg, err := config.Load(*path)
 	if err != nil {
@@ -94,4 +94,11 @@ func main() {
 		slog.Error("server failed", "error", err)
 		os.Exit(1)
 	}
+}
+
+func defaultConfigPath() string {
+	if path := os.Getenv("MIHOMO_OBSERVER_CONFIG"); path != "" {
+		return path
+	}
+	return "config.yaml"
 }

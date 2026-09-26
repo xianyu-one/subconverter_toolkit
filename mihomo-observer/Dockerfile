@@ -11,5 +11,5 @@ COPY --from=build /out/mihomo-observer /usr/local/bin/mihomo-observer
 USER observer
 VOLUME /data
 EXPOSE 8080
+ENV MIHOMO_OBSERVER_CONFIG=/etc/observer/config.yaml
 ENTRYPOINT ["/usr/local/bin/mihomo-observer"]
-CMD ["-config", "/etc/observer/config.yaml"]

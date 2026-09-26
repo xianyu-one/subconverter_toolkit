@@ -5,3 +5,8 @@ data
 *.db-wal
 config.yaml
 config.docker.yaml
+dist
+deploy
+docs
+README.md
+Makefile

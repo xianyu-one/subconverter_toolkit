@@ -2,10 +2,12 @@ services:
   observer:
     build: .
     restart: unless-stopped
+    environment:
+      MIHOMO_OBSERVER_CONFIG: ${MIHOMO_OBSERVER_CONFIG:-/etc/observer/config.yaml}
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
-      - ./config.docker.yaml:/etc/observer/config.yaml:ro
+      - ${OBSERVER_CONFIG_FILE:-./config.docker.yaml}:${MIHOMO_OBSERVER_CONFIG:-/etc/observer/config.yaml}:ro
       - observer_data:/data
 
 volumes:

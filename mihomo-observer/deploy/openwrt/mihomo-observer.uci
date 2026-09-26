@@ -1,0 +1,2 @@
+config observer 'main'
+	option config_file '/etc/mihomo-observer/config.yaml'
