@@ -14,7 +14,7 @@ func TestFetchPreNodesReadsClashSubscription(t *testing.T) {
 	}))
 	defer upstream.Close()
 	client := prefetch.NewClient(prefetch.Config{}, func(string, ...interface{}) {}, func(s string) string { return s })
-	nodes, err := client.FetchPreNodes(upstream.URL)
+	nodes, err := client.FetchPreNodes(upstream.URL, prefetch.DefaultUserAgent)
 	if err != nil || len(nodes) != 1 || nodes[0]["server"] != "vpn.example" {
 		t.Fatalf("upstream nodes = %v, %v", nodes, err)
 	}

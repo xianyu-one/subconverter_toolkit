@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestPrivateConfigPathIsOptionalButMustLoadWhenSet(t *testing.T) {
@@ -18,6 +19,37 @@ func TestPrivateConfigPathIsOptionalButMustLoadWhenSet(t *testing.T) {
 	_, _, err = loadConfig()
 	if err == nil {
 		t.Fatal("configured missing file did not fail startup")
+	}
+}
+
+func TestCacheTTLConfiguration(t *testing.T) {
+	t.Setenv("PRIVATE_CONFIG_PATH", "")
+	t.Setenv("COVER_PROFILE_CONFIG_PATH", "")
+	for _, tc := range []struct {
+		value string
+		want  time.Duration
+		bad   bool
+	}{
+		{"3h", 3 * time.Hour, false},
+		{"30m", 30 * time.Minute, false},
+		{"0h", 0, true},
+		{"-1m", 0, true},
+		{"abc", 0, true},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			t.Setenv("PREFETCH_CACHE_TTL", tc.value)
+			cfg, _, err := loadConfig()
+			if (err != nil) != tc.bad {
+				t.Fatalf("loadConfig error = %v", err)
+			}
+			if !tc.bad && cfg.CacheTTL != tc.want {
+				t.Fatalf("TTL = %s, want %s", cfg.CacheTTL, tc.want)
+			}
+		})
+	}
+	service := NewService(&Config{}, nil)
+	if service.cfg.CacheTTL != 3*time.Hour {
+		t.Fatalf("service default TTL = %s", service.cfg.CacheTTL)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"net/http/httputil"
 	"strings"
 
+	"prefetch-proxy/internal/prefetch"
 	"prefetch-proxy/internal/privateconfig"
 )
 
@@ -52,6 +53,21 @@ func (s *Service) handleProxyRequest(w http.ResponseWriter, r *http.Request, pro
 		}
 		r.URL.RawQuery = query.Encode()
 	}
+	userAgent := query.Get("user_agent")
+	if userAgent == "" {
+		userAgent = prefetch.DefaultUserAgent
+	}
+	for _, char := range userAgent {
+		if char < 0x20 || char == 0x7f {
+			http.Error(w, "Invalid user_agent", http.StatusBadRequest)
+			return
+		}
+	}
+	noCache := query.Get("nocache") == "1"
+	query.Del("user_agent")
+	query.Del("nocache")
+	r.URL.RawQuery = query.Encode()
+	r.Header.Set("User-Agent", userAgent)
 	if r.URL.Path == "/sub" && query.Get("config") != "" && (httpURL(query.Get("config")) || s.cfg.ConfigDir != "") {
 		internalConfig, err := s.prepareConfig(r, query.Get("config"))
 		if err != nil {
@@ -77,33 +93,33 @@ func (s *Service) handleProxyRequest(w http.ResponseWriter, r *http.Request, pro
 	// 拆分多个由 "|" 分隔的订阅链接
 	requestedURLs := strings.Split(urlParam, "|")
 	var subURLs []string
-	var regularSubs []string
+	var regularSources []string
+	var regularInternal []string
 	modified := hasChainToken
 
-	// 遍历所有订阅链接，区分是否需要经过二次代理预获取
+	// 所有 HTTP(S) 订阅在本服务获取；其他 Subconverter 输入形式原样保留。
 	for _, subURL := range requestedURLs {
-		if s.isTargetDomain(subURL) {
-			s.debugLog("命中目标域名，开始预获取流程: %s", maskLogURL(subURL))
-			internalLink, err := s.processSubscription(subURL)
-			if err != nil {
-				log.Printf("处理二次订阅失败 [%s]", maskLogURL(subURL))
-				modified = true
-				continue
-			}
-			if !s.hasUpstreamNodes(r, internalLink) {
-				s.cache.Delete(md5Hash(subURL))
-				log.Printf("二次订阅没有可解析节点 [%s]", maskLogURL(subURL))
-				modified = true
-				continue
-			}
-			s.debugLog("订阅转换为内部链接: %s -> %s", maskLogURL(subURL), internalLink)
-			// 将原始订阅链接替换为本地缓存服务的短链
-			subURLs = append(subURLs, internalLink)
-			modified = true
-		} else {
-			s.debugLog("常规订阅记录（稍后将提取其域名）: %s", maskLogURL(subURL))
-			regularSubs = append(regularSubs, subURL)
+		if !httpURL(subURL) {
 			subURLs = append(subURLs, subURL)
+			continue
+		}
+		target := s.isTargetDomain(subURL)
+		internalLink, err := s.processSubscription(r, subURL, userAgent, noCache, target)
+		if err != nil {
+			log.Printf("处理订阅失败 [%s]: %v", maskLogURL(subURL), err)
+			if noCache {
+				http.Error(w, "Failed to refresh upstream", http.StatusBadGateway)
+				return
+			}
+			modified = true
+			continue
+		}
+		s.debugLog("订阅转换为内部链接: %s -> %s", maskLogURL(subURL), internalLink)
+		subURLs = append(subURLs, internalLink)
+		modified = true
+		if !target {
+			regularSources = append(regularSources, subURL)
+			regularInternal = append(regularInternal, internalLink)
 		}
 	}
 	if len(subURLs) == 0 {
@@ -126,10 +142,13 @@ func (s *Service) handleProxyRequest(w http.ResponseWriter, r *http.Request, pro
 		modified = true
 	}
 
-	// 提取并写入常规订阅的域名（在后台解析写入）
-	if len(regularSubs) > 0 {
-		joinedRegularSubs := strings.Join(regularSubs, "|")
-		s.processRegularSubscriptions(joinedRegularSubs)
+	// 使用内部链接提取普通订阅域名，避免后端再访问原始上游。
+	if len(regularSources) > 0 {
+		err := s.processRegularSubscriptions(strings.Join(regularSources, "|"), strings.Join(regularInternal, "|"), userAgent, noCache)
+		if err != nil && noCache {
+			http.Error(w, "Failed to refresh regular subscription domains", http.StatusBadGateway)
+			return
+		}
 	}
 
 	// 如果参数发生了改变，重写 HTTP 请求参数

@@ -190,15 +190,16 @@ include_check_YYYYMMDD_HHMMSS.report
 
 ## Prefetch Proxy
 
-`prefetch-proxy/` 是位于客户端与 Subconverter 之间的 Go 反向代理。普通请求会直接转发；命中指定订阅域名时，它会启动临时 Mihomo，通过订阅提供的前置节点再次获取真实订阅，再把缓存地址交给 Subconverter。
+`prefetch-proxy/` 是位于客户端与 Subconverter 之间的 Go 反向代理。它会先拉取所有 HTTP(S) 上游订阅，将缓存内容的内部地址交给 Subconverter；命中指定订阅域名时，它会启动临时 Mihomo，通过订阅提供的前置节点再次获取真实订阅。
 
 请求流程：
 
 ```text
 客户端
   -> Prefetch Proxy
-       -> 普通订阅：直接交给 Subconverter
+       -> 普通 HTTP(S) 订阅：由 Prefetch Proxy 直接拉取并缓存
        -> 特殊订阅：获取前置节点 -> 启动临时 Mihomo -> 获取真实订阅
+       -> 将两类订阅的内部缓存地址交给 Subconverter
        -> 可选：提取节点域名并更新规则文件
        -> 可选：注入私有节点
        -> 可选：读取自定义 INI，改写 HTTP(S) ruleset，并代取规则文件
@@ -232,6 +233,7 @@ services:
       SUBCONVERTER_URL: "http://subconverter:25500"
       INTERNAL_BASE_URL: "http://prefetch-proxy:8080"
       TARGET_DOMAINS: "special-provider.example,another-provider.example"
+      PREFETCH_CACHE_TTL: "3h"
       PROXY_PORT: "28080"
       API_PORT: "9090"
       DEBUG: "false"
@@ -256,9 +258,11 @@ docker compose up -d --build
 http://localhost:25500/sub?target=clash&url=<URL 编码后的订阅地址>&config=<INI 地址>
 ```
 
-`url` 参数包含多个以 `|` 分隔的订阅时，代理会逐一判断。仅命中 `TARGET_DOMAINS` 的订阅会进入二次获取流程；其他订阅直接交给 Subconverter。
+`url` 参数包含多个以 `|` 分隔的订阅时，代理会逐一处理。所有 HTTP(S) 订阅均由 Prefetch Proxy 拉取并改写为内部 URL；仅命中 `TARGET_DOMAINS` 的订阅会进入二次获取流程。节点分享链接等非 HTTP(S) 条目原样交给 Subconverter。
 
-二次获取的结果缓存在内存中一小时。服务重启后缓存会丢失，同一订阅的下一次请求将重新执行预取。
+两类订阅内容及普通订阅的域名提取标记默认在内存中缓存 3 小时，可用 `PREFETCH_CACHE_TTL` 修改，例如 `30m`、`6h`。无效或非正数时长会使服务启动失败。服务重启后缓存会丢失。请求加 `nocache=1` 会强制刷新全部 HTTP(S) 上游及相关域名提取标记；若其中任一上游刷新失败，本次请求返回错误，之前有效的缓存仍保留。
+
+代理默认使用 `FlClash/v0.8.98 clash-verge Platform/windows` 作为 User-Agent，不转发本地客户端的该请求头。可用请求参数 `user_agent=<URL 编码后的值>` 覆盖；该参数同时作用于代理拉取上游和代理发往 Subconverter 的请求。不同 User-Agent 使用独立缓存。`user_agent` 与 `nocache` 不会转发为 Subconverter 查询参数。
 
 ### 自动更新节点域名规则
 
@@ -285,7 +289,7 @@ services:
       - ./rules-data:/data
 ```
 
-该功能同时处理普通订阅和二次订阅。相同的普通订阅组合一小时内只会预解析一次。目标文件不存在时程序会创建它，但挂载目录必须已经存在且可写。
+该功能同时处理普通订阅和二次订阅。相同的普通订阅组合在 `PREFETCH_CACHE_TTL` 有效期内只会预解析一次，`nocache=1` 可强制重新解析。目标文件不存在时程序会创建它，但挂载目录必须已经存在且可写。
 
 ### 注入私有节点与链式代理
 
@@ -363,6 +367,7 @@ keys:
           target: clash
           config: config/all-online.ini
           filename: abc
+          user_agent: 'FlClash/v0.8.98 clash-verge Platform/windows'
       "2":
         upstreams: [first, second, third]
         params:
@@ -381,9 +386,9 @@ https://your-prefetch-proxy.example/sub?chaintoken=<令牌>&coverprofile=1
 
 文件中的表达式由 Prefetch Proxy 作为查询参数转发时自动 URL 编码；只有手工拼接 `/sub?...&include=...` 请求地址时，才需要对参数值做 URL 编码。`include`、`exclude` 各写一个字符串；需要多个备选关键词时在同一表达式中用 `|` 组合。它们与 `pref.toml` 中的 `include_remarks`、`exclude_remarks` 默认设置不同：这里的值属于单份固定订阅配置，并会作为请求参数覆盖 Subconverter 的对应默认值。
 
-请求中的 `url` 会整体替换配置中的上游列表；`target`、`config`、`exclude`、`include`、`filename` 等参数逐项覆盖文件默认值。显式空 `exclude=` 可清除文件值，空 `url=` 会报错。不带 `coverprofile` 的旧 `/sub` 请求继续使用客户端提供的参数。
+请求中的 `url` 会整体替换配置中的上游列表；`target`、`config`、`exclude`、`include`、`filename`、`user_agent` 等参数逐项覆盖文件默认值。显式空 `exclude=` 可清除文件值，空 `url=` 会报错。不带 `coverprofile` 的旧 `/sub` 请求继续使用客户端提供的参数。
 
-多个上游中只要有一个提供可解析节点即可继续转换；全部失败时返回错误，私有节点不计入成功上游。代理会跳过预取失败的上游；普通上游的部分失败依赖后端 Subconverter 启用 `skip_failed_links = true`，本仓库提供的 `pref.toml` 已启用。完整格式及错误行为见[固定订阅配置设计](prefetch-proxy/docs/prefetch-proxy-cover-profiles-design.md)。
+多个上游中只要有一个提供可解析节点即可继续转换；全部失败时返回错误，私有节点不计入成功上游。普通请求中，代理会跳过拉取或解析失败的 HTTP(S) 上游；`nocache=1` 则要求全部 HTTP(S) 上游成功刷新。完整格式及错误行为见[固定订阅配置设计](prefetch-proxy/docs/prefetch-proxy-cover-profiles-design.md)。
 
 ### 环境变量
 
@@ -392,6 +397,7 @@ https://your-prefetch-proxy.example/sub?chaintoken=<令牌>&coverprofile=1
 | `LISTEN_ADDR` | `:8080` | Prefetch Proxy 监听地址 |
 | `SUBCONVERTER_URL` | `http://subconverter:25500` | 后端 Subconverter 地址 |
 | `TARGET_DOMAINS` | 程序默认为空；镜像预设 `special-provider.com` | 需要二次获取的订阅域名，多个值用英文逗号分隔；部署时应显式设置 |
+| `PREFETCH_CACHE_TTL` | `3h` | HTTP(S) 订阅内容及普通订阅域名提取标记的缓存时间，支持 Go 时长格式 |
 | `MIHOMO_PATH` | `/usr/local/bin/mihomo` | Mihomo 可执行文件路径 |
 | `PROXY_PORT` | `28080` | 临时 Mihomo SOCKS5 端口 |
 | `API_PORT` | `9090` | 临时 Mihomo Controller 端口 |

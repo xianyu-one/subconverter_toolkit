@@ -1,11 +1,13 @@
 package app
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,6 +16,10 @@ import (
 )
 
 func TestPrivateNodesAreSelectedThroughProxy(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("proxies:\n  - name: subscription\n    type: ss\n    server: upstream.example\n"))
+	}))
+	defer upstream.Close()
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("list") == "true" {
 			w.Write([]byte("proxies:\n  - name: usable\n    type: ss\n    server: example.com\n"))
@@ -54,7 +60,7 @@ keys:
 		{"alice-secret", "home.example", "office.example"},
 		{"bob-secret", "office.example", "home.example"},
 	} {
-		req := httptest.NewRequest(http.MethodGet, "/sub?url=https%3A%2F%2Fprovider.example%2Fsub&chaintoken="+tc.token, nil)
+		req := httptest.NewRequest(http.MethodGet, "/sub?url="+url.QueryEscape(upstream.URL)+"&chaintoken="+tc.token, nil)
 		resp := httptest.NewRecorder()
 		handler.ServeHTTP(resp, req)
 		if resp.Code != http.StatusOK {
@@ -68,7 +74,7 @@ keys:
 			t.Fatal("secret forwarded to backend")
 		}
 		parts := strings.Split(forwarded.Get("url"), "|")
-		if len(parts) != 2 || !strings.HasPrefix(parts[1], "http://proxy.test/internal/private/") || strings.Contains(parts[1], tc.token) {
+		if len(parts) != 2 || !strings.HasPrefix(parts[0], "http://proxy.test/internal/") || !strings.HasPrefix(parts[1], "http://proxy.test/internal/private/") || strings.Contains(parts[1], tc.token) {
 			t.Fatalf("unexpected internal URL: %v", parts)
 		}
 		internal, _ := url.Parse(parts[1])
@@ -91,7 +97,7 @@ keys:
 		}
 	}
 	bad := httptest.NewRecorder()
-	handler.ServeHTTP(bad, httptest.NewRequest(http.MethodGet, "/sub?url=https%3A%2F%2Fprovider.example%2Fsub&chaintoken=wrong", nil))
+	handler.ServeHTTP(bad, httptest.NewRequest(http.MethodGet, "/sub?url="+url.QueryEscape(upstream.URL)+"&chaintoken=wrong", nil))
 	if bad.Code != http.StatusForbidden {
 		t.Fatalf("invalid token status %d", bad.Code)
 	}
@@ -103,7 +109,18 @@ keys:
 }
 
 func TestCoverProfileUsesDefaultsAndRequestOverrides(t *testing.T) {
+	var upstreamUA string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamUA = r.Header.Get("User-Agent")
+		w.Write([]byte("proxies:\n  - name: usable\n    type: ss\n    server: upstream.example\n"))
+	}))
+	defer upstream.Close()
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Backend-UA", r.Header.Get("User-Agent"))
+		if r.URL.Query().Get("list") == "true" {
+			w.Write([]byte("proxies:\n  - name: usable\n    type: ss\n    server: upstream.example\n"))
+			return
+		}
 		w.Write([]byte(r.URL.RawQuery))
 	}))
 	defer backend.Close()
@@ -111,28 +128,31 @@ func TestCoverProfileUsesDefaultsAndRequestOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	profiles, err := coverconfig.Parse([]byte(`keys:
+	profiles, err := coverconfig.Parse([]byte(fmt.Sprintf(`keys:
   - name: alice
     upstreams:
-      one: https://one.example/sub
-      two: https://two.example/sub
+      one: %s/one
+      two: %s/two
     profiles:
       "1":
         upstreams: [one, two]
-        params: {target: clash, filename: abc, exclude: old}
-`), keys)
+        params: {target: clash, filename: abc, exclude: old, user_agent: 'Profile/1'}
+`, upstream.URL, upstream.URL)), keys)
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := NewService(&Config{SubconverterURL: backend.URL, CoverProfiles: profiles}, keys)
+	service := NewService(&Config{SubconverterURL: backend.URL, InternalBaseURL: "http://proxy.test", CoverProfiles: profiles}, keys)
 	handler, err := service.Handler()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	for _, tc := range []struct{ path, wantURL, wantFilename, wantExclude string }{
-		{"/sub?chaintoken=secret&coverprofile=1", "https://one.example/sub|https://two.example/sub", "abc", "old"},
-		{"/sub?chaintoken=secret&coverprofile=1&url=https%3A%2F%2Foverride.example%2Fsub&filename=client&exclude=", "https://override.example/sub", "client", ""},
+	for _, tc := range []struct {
+		path, wantFilename, wantExclude, wantUA string
+		wantCount                               int
+	}{
+		{"/sub?chaintoken=secret&coverprofile=1", "abc", "old", "Profile/1", 2},
+		{"/sub?chaintoken=secret&coverprofile=1&url=" + url.QueryEscape(upstream.URL+"/override") + "&filename=client&exclude=&user_agent=URL%2F2", "client", "", "URL/2", 1},
 	} {
 		resp := httptest.NewRecorder()
 		handler.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, tc.path, nil))
@@ -143,14 +163,20 @@ func TestCoverProfileUsesDefaultsAndRequestOverrides(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if query.Get("url") != tc.wantURL || query.Get("filename") != tc.wantFilename || query.Get("exclude") != tc.wantExclude || query.Get("target") != "clash" || query.Has("chaintoken") || query.Has("coverprofile") {
+		parts := strings.Split(query.Get("url"), "|")
+		if len(parts) != tc.wantCount || query.Get("filename") != tc.wantFilename || query.Get("exclude") != tc.wantExclude || query.Get("target") != "clash" || query.Has("chaintoken") || query.Has("coverprofile") || query.Has("user_agent") || resp.Header().Get("X-Backend-UA") != tc.wantUA || upstreamUA != tc.wantUA {
 			t.Fatalf("unexpected forwarded query: %v", query)
+		}
+		for _, part := range parts {
+			if !strings.HasPrefix(part, "http://proxy.test/internal/") {
+				t.Fatalf("upstream was not rewritten: %s", part)
+			}
 		}
 	}
 	legacy := httptest.NewRecorder()
-	handler.ServeHTTP(legacy, httptest.NewRequest(http.MethodGet, "/sub?chaintoken=secret&url=https%3A%2F%2Flegacy.example%2Fsub", nil))
+	handler.ServeHTTP(legacy, httptest.NewRequest(http.MethodGet, "/sub?chaintoken=secret&url="+url.QueryEscape(upstream.URL+"/legacy"), nil))
 	legacyQuery, _ := url.ParseQuery(legacy.Body.String())
-	if legacy.Code != http.StatusOK || legacyQuery.Get("url") != "https://legacy.example/sub" || legacyQuery.Has("target") {
+	if legacy.Code != http.StatusOK || !strings.HasPrefix(legacyQuery.Get("url"), "http://proxy.test/internal/") || legacyQuery.Has("target") {
 		t.Fatalf("legacy request changed: %d %v", legacy.Code, legacyQuery)
 	}
 }
@@ -179,19 +205,72 @@ func TestCoverProfileRejectsMissingAccessAndEmptyURL(t *testing.T) {
 	}
 }
 
-func TestFailedPrefetchDoesNotBlockAnotherUpstream(t *testing.T) {
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(r.URL.Query().Get("url"))) }))
+func TestCoverProfileNoCacheDefaultCanBeOverridden(t *testing.T) {
+	var fetches atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fetches.Add(1)
+		w.Write([]byte("proxies:\n  - name: usable\n    type: ss\n    server: upstream.example\n"))
+	}))
+	defer upstream.Close()
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("list") == "true" {
+			w.Write([]byte("proxies:\n  - name: usable\n    type: ss\n    server: upstream.example\n"))
+			return
+		}
+		w.Write([]byte(r.URL.RawQuery))
+	}))
 	defer backend.Close()
-	handler, err := NewService(&Config{SubconverterURL: backend.URL, TargetDomains: []string{"127.0.0.1"}}, nil).Handler()
+	keys, _ := privateconfig.Parse([]byte("keys:\n  - name: alice\n    token: secret\n"))
+	profiles, err := coverconfig.Parse([]byte(fmt.Sprintf("keys:\n  - name: alice\n    upstreams: {one: '%s'}\n    profiles: {'1': {upstreams: [one], params: {nocache: '1'}}}\n", upstream.URL)), keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, _ := NewService(&Config{SubconverterURL: backend.URL, InternalBaseURL: "http://proxy.test", CoverProfiles: profiles}, keys).Handler()
+	for _, path := range []string{
+		"/sub?chaintoken=secret&coverprofile=1",
+		"/sub?chaintoken=secret&coverprofile=1",
+		"/sub?chaintoken=secret&coverprofile=1&nocache=0",
+	} {
+		resp := httptest.NewRecorder()
+		handler.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, path, nil))
+		query, _ := url.ParseQuery(resp.Body.String())
+		if resp.Code != http.StatusOK || query.Has("nocache") {
+			t.Fatalf("%s: status=%d body=%q", path, resp.Code, resp.Body.String())
+		}
+	}
+	if fetches.Load() != 2 {
+		t.Fatalf("profile nocache did not refresh exactly twice: %d", fetches.Load())
+	}
+}
+
+func TestFailedPrefetchDoesNotBlockAnotherUpstream(t *testing.T) {
+	goodServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("proxies:\n  - name: usable\n    type: ss\n    server: example.com\n"))
+	}))
+	defer goodServer.Close()
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("list") == "true" {
+			w.Write([]byte("proxies:\n  - name: usable\n    type: ss\n    server: example.com\n"))
+			return
+		}
+		w.Write([]byte(r.URL.Query().Get("url")))
+	}))
+	defer backend.Close()
+	handler, err := NewService(&Config{SubconverterURL: backend.URL, InternalBaseURL: "http://proxy.test", TargetDomains: []string{"unreachable.invalid"}}, nil).Handler()
 	if err != nil {
 		t.Fatal(err)
 	}
 	bad := "http://127.0.0.1:1/broken"
-	good := "https://healthy.example/sub"
+	good := goodServer.URL
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/sub?target=clash&url="+url.QueryEscape(bad+"|"+good), nil))
-	if resp.Code != http.StatusOK || resp.Body.String() != good {
+	if resp.Code != http.StatusOK || !strings.HasPrefix(resp.Body.String(), "http://proxy.test/internal/") {
 		t.Fatalf("partial failure = %d %q", resp.Code, resp.Body.String())
+	}
+	forced := httptest.NewRecorder()
+	handler.ServeHTTP(forced, httptest.NewRequest(http.MethodGet, "/sub?target=clash&nocache=1&url="+url.QueryEscape(good+"|"+bad), nil))
+	if forced.Code != http.StatusBadGateway {
+		t.Fatalf("partial forced refresh returned %d", forced.Code)
 	}
 	allFailed := httptest.NewRecorder()
 	handler.ServeHTTP(allFailed, httptest.NewRequest(http.MethodGet, "/sub?target=clash&url="+url.QueryEscape(bad), nil))
@@ -201,6 +280,10 @@ func TestFailedPrefetchDoesNotBlockAnotherUpstream(t *testing.T) {
 }
 
 func TestPrivateNodesCannotMaskFailedUpstreams(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("not nodes"))
+	}))
+	defer upstream.Close()
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("list") == "true" {
 			w.Write([]byte("proxies: []\n"))
@@ -218,32 +301,41 @@ func TestPrivateNodesCannotMaskFailedUpstreams(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp := httptest.NewRecorder()
-	handler.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/sub?target=clash&url=https%3A%2F%2Fbroken.example%2Fsub&chaintoken=secret", nil))
+	handler.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/sub?target=clash&url="+url.QueryEscape(upstream.URL)+"&chaintoken=secret", nil))
 	if resp.Code == http.StatusOK {
 		t.Fatalf("private-only response unexpectedly succeeded: %q", resp.Body.String())
 	}
 }
 
 func TestCachedPrefetchWithoutNodesIsSkipped(t *testing.T) {
+	goodServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("proxies:\n  - name: usable\n    type: ss\n    server: example.com\n"))
+	}))
+	defer goodServer.Close()
+	bad := "https://cached.example/sub"
+	badKey := subscriptionCacheKey(bad, "FlClash/v0.8.98 clash-verge Platform/windows", true)
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("list") == "true" {
-			w.Write([]byte("proxies: []\n"))
+			if strings.Contains(r.URL.Query().Get("url"), badKey) {
+				w.Write([]byte("proxies: []\n"))
+			} else {
+				w.Write([]byte("proxies:\n  - name: usable\n    type: ss\n    server: example.com\n"))
+			}
 			return
 		}
 		w.Write([]byte(r.URL.Query().Get("url")))
 	}))
 	defer backend.Close()
-	bad := "https://cached.example/sub"
-	good := "https://healthy.example/sub"
+	good := goodServer.URL
 	service := NewService(&Config{SubconverterURL: backend.URL, InternalBaseURL: "http://proxy.test", TargetDomains: []string{"cached.example"}}, nil)
-	service.cache.Set(md5Hash(bad), []byte("not node data"), time.Hour)
+	service.cache.Set(badKey, []byte("not node data"), time.Hour)
 	handler, err := service.Handler()
 	if err != nil {
 		t.Fatal(err)
 	}
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/sub?target=clash&url="+url.QueryEscape(bad+"|"+good), nil))
-	if resp.Code != http.StatusOK || resp.Body.String() != good {
+	if resp.Code != http.StatusOK || !strings.HasPrefix(resp.Body.String(), "http://proxy.test/internal/") || service.cache.Get(badKey) != nil {
 		t.Fatalf("invalid cached upstream was forwarded: %d %q", resp.Code, resp.Body.String())
 	}
 }

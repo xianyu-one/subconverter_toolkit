@@ -46,11 +46,11 @@ keys:
           exclude: '(到期|剩余流量)'
 ```
 
-`params` 是 Subconverter 参数名到字符串值的映射，允许日后新增参数，不限于 `target`、`config`、`exclude`、`include`、`filename`。`url` 由 `upstreams` 生成；`chaintoken` 与 `coverprofile` 只由 Prefetch Proxy 使用，不能写入 `params`。
+`params` 是请求参数名到字符串值的映射，包括 `target`、`config`、`exclude`、`include`、`filename`，以及 Prefetch Proxy 使用的 `user_agent`、`nocache`。`url` 由 `upstreams` 生成；`chaintoken` 与 `coverprofile` 不能写入 `params`。
 
 `include`、`exclude` 的值是匹配节点名称的正则表达式字符串：前者只保留匹配节点，后者排除匹配节点。YAML 中填写原始表达式，不要预先 URL 编码，也不能写成列表；建议使用单引号，避免正则中的反斜杠被 YAML 双引号当作转义字符。多个关键词任选其一时写 `include: '(香港|日本)'`；必须同时出现且不限定顺序时写 `include: '(?=.*香港)(?=.*专线)'`。`exclude: '(到期|剩余流量)'` 会排除名称含任一关键词的节点。Prefetch Proxy 在转发查询参数时会自动编码这些值；手写 `/sub` URL 时才需要编码。正则的 `|` 与上游 `url` 条目间的 `|` 分隔符用途不同。
 
-命名上游的值遵守 Subconverter 单个 `url` 条目的格式，包括它支持的订阅地址、节点分享链接等。多个条目按配置顺序用 `|` 组合；需要二次获取的 HTTP(S) 地址仍走现有预取流程。
+命名上游的值遵守 Subconverter 单个 `url` 条目的格式，包括 HTTP(S) 订阅地址、节点分享链接等。多个条目按配置顺序用 `|` 组合。所有 HTTP(S) 订阅均由 Prefetch Proxy 拉取并缓存，再以内部 URL 交给 Subconverter；命中 `TARGET_DOMAINS` 的地址仍走两阶段预取流程。非 HTTP(S) 条目原样交给 Subconverter。
 
 启动时严格校验 YAML、密钥名称、上游引用和每份配置的非空上游列表。文件缺失或校验失败时拒绝启动。修改配置文件后重启服务生效；不要求运行中热加载。
 
@@ -71,7 +71,8 @@ keys:
 - 显式 `url=` 整体替换该配置的上游组合，不与之合并；若覆盖后的全部上游失败，不回退到文件中的上游。
 - `target`、`config`、`exclude`、`include`、`filename` 及其他 Subconverter 参数各自覆盖同名默认值。
 - 显式传入的空值清除对应的可选默认参数；显式空 `url=` 返回错误。
-- 转发时移除 `chaintoken` 和 `coverprofile`，保留其他 Subconverter 参数的原有含义。若文件和请求都没有 `target`，由 Subconverter 按其规则处理。
+- 转发时移除 `chaintoken`、`coverprofile`、`user_agent` 和 `nocache`，保留其他 Subconverter 参数的原有含义。若文件和请求都没有 `target`，由 Subconverter 按其规则处理。`user_agent` 会设置代理拉取上游及发往 Subconverter 请求的 User-Agent 头，URL 参数优先于文件默认值；未设置时使用 `FlClash/v0.8.98 clash-verge Platform/windows`。
+- `nocache=1` 强制刷新全部 HTTP(S) 上游及普通订阅域名提取标记。刷新其中任何上游失败时本次请求返回错误；之前仍有效的缓存不被失败结果覆盖。
 - 若密钥选中私有节点，继续按现有方式注入；没有私有节点的密钥不注入内部私有节点链接。
 
 ## 多上游失败规则
@@ -84,7 +85,7 @@ keys:
 - 不使用过期缓存兜底。仍在有效期内的成功预取缓存可以作为本次可用内容。
 - 只有上游失败可以被跳过；`config`、`target`、转换模板等最终转换错误仍返回错误。
 
-当前仓库的 Subconverter 配置启用了 `skip_failed_links = true`，可以跳过普通上游失败；Prefetch Proxy 现有预取逻辑会在第一个特殊上游失败时直接终止，需要调整。实现还须独立确认至少一个上游确实产生可解析节点，避免私有节点让“全部上游失败”误判为成功。后端配置与预取行为须共同满足上述规则。
+Prefetch Proxy 会在转发前检查每个 HTTP(S) 上游是否产生可解析节点，跳过失败项；不依赖后端的 `skip_failed_links` 处理这些地址。`nocache=1` 的强制刷新采用更严格的失败规则：任一 HTTP(S) 上游失败即返回错误。订阅内容缓存与普通订阅域名提取标记共用 `PREFETCH_CACHE_TTL`，默认 `3h`，并按上游地址及最终 User-Agent 区分。
 
 ## 兼容性检查场景
 

@@ -13,6 +13,8 @@ services:
       - SUBCONVERTER_URL=http://subconverter:25500
       # 需要预获取拦截的域名列表，英文逗号分隔
       - TARGET_DOMAINS=my-special-sub.com,another-tricky.net
+      # 上游订阅内容及普通订阅域名提取标记的缓存时间（默认 3h）
+      - PREFETCH_CACHE_TTL=3h
       # 本地代理端口（不需要暴露到外部）
       - PROXY_PORT=28080
       # 提供给 Subconverter 拉取本地缓存文件的内网基础地址

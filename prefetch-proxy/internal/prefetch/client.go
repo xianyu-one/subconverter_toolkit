@@ -17,6 +17,8 @@ import (
 
 type Node map[string]interface{}
 
+const DefaultUserAgent = "FlClash/v0.8.98 clash-verge Platform/windows"
+
 type Config struct {
 	MihomoPath string
 	ProxyPort  int
@@ -35,13 +37,13 @@ func NewClient(cfg Config, debugLog func(string, ...interface{}), maskURL func(s
 }
 
 // fetchPreNodes 获取并提取所有前置节点 (未经过代理)
-func (c *Client) FetchPreNodes(targetURL string) ([]Node, error) {
+func (c *Client) FetchPreNodes(targetURL, userAgent string) ([]Node, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	c.debugLog("fetchPreNodes: 开始请求 %s", c.maskURL(targetURL))
 	req, _ := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
-	req.Header.Set("User-Agent", "ClashforWindows/0.19.23") // 伪装 UA 防止被简单反扒拦截
+	req.Header.Set("User-Agent", userAgent)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -183,7 +185,7 @@ func selectMihomoNode(apiPort int, groupName, nodeName string) error {
 
 // fetchRealNodesWithRetry 通过本地 Mihomo 代理获取真实节点数据
 // 新增逻辑：遍历 nodeNames 列表，使用 API 显式要求 Mihomo 切换前置节点进行重试
-func (c *Client) FetchRealNodesWithRetry(targetURL string, proxyPort int, apiPort int, nodeNames []string, maxRetries int) ([]byte, error) {
+func (c *Client) FetchRealNodesWithRetry(targetURL, userAgent string, proxyPort int, apiPort int, nodeNames []string, maxRetries int) ([]byte, error) {
 	proxyStr := fmt.Sprintf("socks5://127.0.0.1:%d", proxyPort)
 	proxyURL, _ := url.Parse(proxyStr)
 
@@ -223,7 +225,7 @@ func (c *Client) FetchRealNodesWithRetry(targetURL string, proxyPort int, apiPor
 		c.debugLog("fetchRealNodes: 发起 SOCKS5 代理请求: %s", c.maskURL(targetURL))
 
 		req, _ := http.NewRequest("GET", targetURL, nil)
-		req.Header.Set("User-Agent", "ClashforWindows/0.19.23")
+		req.Header.Set("User-Agent", userAgent)
 
 		resp, err := client.Do(req)
 

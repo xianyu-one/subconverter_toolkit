@@ -30,6 +30,7 @@ type Config struct {
 	CoverProfileConfigPath string
 	CoverProfiles          *coverconfig.Config
 	ConfigDir              string // 可选：与 Subconverter 共享的本地 INI 目录
+	CacheTTL               time.Duration
 }
 
 type Service struct {
@@ -45,6 +46,9 @@ type Service struct {
 }
 
 func NewService(cfg *Config, privateNodes *privateconfig.Config) *Service {
+	if cfg.CacheTTL == 0 {
+		cfg.CacheTTL = 3 * time.Hour
+	}
 	s := &Service{
 		cfg:          cfg,
 		cache:        &CacheManager{items: make(map[string]CacheItem)},
@@ -110,6 +114,10 @@ func maskLogURL(u string) string {
 
 // initConfig 初始化环境变量配置
 func loadConfig() (*Config, *privateconfig.Config, error) {
+	cacheTTL, err := time.ParseDuration(getEnv("PREFETCH_CACHE_TTL", "3h"))
+	if err != nil || cacheTTL <= 0 {
+		return nil, nil, fmt.Errorf("PREFETCH_CACHE_TTL must be a positive duration: %q", getEnv("PREFETCH_CACHE_TTL", "3h"))
+	}
 	cfg := &Config{
 		ListenAddr:             getEnv("LISTEN_ADDR", ":8080"),
 		SubconverterURL:        getEnv("SUBCONVERTER_URL", "http://subconverter:25500"),
@@ -123,6 +131,7 @@ func loadConfig() (*Config, *privateconfig.Config, error) {
 		PrivateConfigPath:      getEnv("PRIVATE_CONFIG_PATH", ""),
 		CoverProfileConfigPath: getEnv("COVER_PROFILE_CONFIG_PATH", ""),
 		ConfigDir:              getEnv("CONFIG_DIR", ""),
+		CacheTTL:               cacheTTL,
 	}
 	domains := getEnv("TARGET_DOMAINS", "")
 	if domains != "" {
