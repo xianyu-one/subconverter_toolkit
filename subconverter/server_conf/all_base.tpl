@@ -12,18 +12,7 @@ hosts:
   "time.android.com": 203.107.6.88
   "time.google.com": 203.107.6.88
 
-{% if request.target == "clash" and default(request.clash.redir-host, "0") == "1" %}
 ipv6: true
-tun:
-  enable: true
-  stack: mixed
-  auto-route: true
-  auto-detect-interface: true
-  strict-route: true
-  dns-hijack:
-    - any:53
-    - tcp://any:53
-{% else if default(request.clash.tun-set, "0") == "1" %}
 tun:
   auto-detect-interface: true
   auto-route: true
@@ -40,10 +29,7 @@ tun:
   inet6_route_address:
     - '::/1'
     - '8000::/1'
-{% else %}
-{% endif %}
 
-{% if request.target == "clash" and default(request.clash.redir-host, "0") == "1" %}
 sniffer:
   enable: true
   force-dns-mapping: true
@@ -56,96 +42,36 @@ sniffer:
       ports: [443, 8443]
     QUIC:
       ports: [443, 8443]
-{% endif %}
 
 dns:
-{% if request.target == "clash" and default(request.clash.redir-host, "0") == "1" %}
   enable: true
   listen: 127.0.0.1:1053
   ipv6: true
-  enhanced-mode: redir-host
   prefer-h3: false
   respect-rules: true
   use-hosts: true
   use-system-hosts: true
   default-nameserver:
-    - https://223.5.5.5/dns-query
-  proxy-server-nameserver:
-    - https://223.5.5.5/dns-query#DIRECT
-    - https://223.6.6.6/dns-query#DIRECT
-  direct-nameserver:
-    - https://223.5.5.5/dns-query#DIRECT
-    - https://223.6.6.6/dns-query#DIRECT
-  direct-nameserver-follow-policy: false
-  nameserver:
-    - 'https://1.1.1.1/dns-query#🔰 节点选择'
-    - 'https://8.8.8.8/dns-query#🔰 节点选择'
-{% else %}
-  enable: true
-  direct-nameserver-follow-policy: false
-  listen: :53
-  prefer-h3: false
-  respect-rules: false
-  use-hosts: true
-  use-system-hosts: true
-  default-nameserver:
-    - system
-    - 223.6.6.6
-    - 8.8.4.4
-  ipv6: true
-  enhanced-mode: fake-ip
-  nameserver:
-    - 119.29.29.29
     - 223.5.5.5
-    - tls://223.5.5.5:853
-    - tls://223.6.6.6:853
-    - tls://120.53.53.53
-    - tls://1.12.12.12
-  fallback:
-    - https://1.0.0.1/dns-query
-    - https://public.dns.iij.jp/dns-query
-    - tls://8.8.4.4:853
+
+  proxy-server-nameserver:
+    - https://223.5.5.5/dns-query
+    - https://223.6.6.6/dns-query
+
+  nameserver-policy:
+    "geosite:cn":
+      - https://223.5.5.5/dns-query
+      - https://223.6.6.6/dns-query
+
+  nameserver:
+    - https://1.1.1.1/dns-query
+    - https://8.8.8.8/dns-query
+{% if default(request.clash.redir-host, "0") == "1" %}
+  enhanced-mode: redir-host
+{% else %}
+  enhanced-mode: fake-ip
   fake-ip-filter-mode: blacklist
   fake-ip-range: 198.18.0.1/16
-  fallback-filter:
-    geoip: false
-    geoip-code: CN
-    ipcidr:
-      - 240.0.0.0/4
-      - 0.0.0.0/32
-      - 127.0.0.1/32
-    domain:
-      - +.facebook.com
-      - +.twitter.com
-      - +.google.com
-      - +.googleapis.com
-      - +.google.cn
-      - +.googleapis.cn
-      - +.xn--ngstr-lra8j.com
-      - +.googlevideo.com
-      - +.gvt1.com
-      - +.gmail.com
-      - +.youtube.com
-      - +.youtu.be
-      - +.gvt0.com
-      - +.gvt2.com
-      - +.gvt3.com
-      - +.gstatic.com
-      - +.265.com
-      - +.2mdn.net
-      - +.app-measurement.com
-      - +.c.admob.com
-      - +.clickserve.dartsearch.net
-      - +.crl.pki.goog
-      - +.doubleclick.net
-      - +.firebase-settings.crashlytics.com
-      - +.google-analytics.com
-      - +.googleadservices.com
-      - +.googleanalytics.com
-      - +.googleoptimize.com
-      - +.googlesyndication.com
-      - +.googletagmanager.com
-      - +.googletagservices.com
   fake-ip-filter:
 {% include "include/cn-list.txt" %}
 {% include "include/a-list.txt" %}
@@ -162,8 +88,7 @@ Proxy Group: ~
 Rule: ~
 {% endif %}
 
-{% endif %}
-{% if request.target == "surge" %}
+{% else if request.target == "surge" %}
 
 [General]
 loglevel = notify
@@ -176,8 +101,7 @@ dns-server = 119.29.29.29,223.5.5.5
 [Script]
 http-request https?:\/\/.*\.iqiyi\.com\/.*authcookie= script-path=https://raw.githubusercontent.com/NobyDa/Script/master/iQIYI-DailyBonus/iQIYI.js
 
-{% endif %}
-{% if request.target == "loon" %}
+{% else if request.target == "loon" %}
 
 [General]
 # IPV6 启动与否
@@ -273,8 +197,7 @@ ca-p12 = MIIKGQIBAzCCCeMGCSqGSIb3DQEHAaCCCdQEggnQMIIJzDCCBBcGCSqGSIb3DQEHBqCCBAg
 ca-passphrase = FA1A9849
 skip-server-cert-verify = false
 
-{% endif %}
-{% if request.target == "quan" %}
+{% else if request.target == "quan" %}
 
 [SERVER]
 
@@ -304,8 +227,7 @@ STATE,AUTO
 
 [MITM]
 
-{% endif %}
-{% if request.target == "quanx" %}
+{% else if request.target == "quanx" %}
 
 [general]
 excluded_routes=192.168.0.0/16, 172.16.0.0/12, 100.64.0.0/10, 10.0.0.0/8
@@ -345,8 +267,7 @@ static=🐟 漏网之鱼, direct, img-url=https://raw.githubusercontent.com/Kool
 
 [mitm]
 
-{% endif %}
-{% if request.target == "mellow" %}
+{% else if request.target == "mellow" %}
 
 [Endpoint]
 DIRECT, builtin, freedom, domainStrategy=UseIP
@@ -376,8 +297,7 @@ doubleclick.net = 127.0.0.1
 [Log]
 loglevel = warning
 
-{% endif %}
-{% if request.target == "surfboard" %}
+{% else if request.target == "surfboard" %}
 
 [General]
 loglevel = notify
@@ -387,8 +307,7 @@ ipv6 = false
 dns-server = system, 223.5.5.5
 exclude-simple-hostnames = true
 enhanced-mode-by-rule = true
-{% endif %}
-{% if request.target == "sssub" %}
+{% else if request.target == "sssub" %}
 {
   "route": "bypass-lan-china",
   "remote_dns": "dns.google",
@@ -406,8 +325,7 @@ enhanced-mode-by-rule = true
   "udpdns": false
 }
 
-{% endif %}
-{% if request.target == "singbox" %}
+{% else if request.target == "singbox" %}
 
 {
     "log": {
