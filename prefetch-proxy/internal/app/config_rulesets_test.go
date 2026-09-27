@@ -9,15 +9,20 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"prefetch-proxy/internal/prefetch"
 )
 
 func TestRemoteConfigRulesetsAreServedByPrefetchProxy(t *testing.T) {
 	var source *httptest.Server
+	var configUA, rulesetUA string
 	source = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/custom.ini":
+			configUA = r.Header.Get("User-Agent")
 			w.Write([]byte("[custom]\r\nruleset=DIRECT," + source.URL + "/private.list?token=secret,86400\r\nruleset=REJECT,[]GEOIP,CN,no-resolve\r\nruleset=DIRECT,rules/local.list\r\nother=" + source.URL + "/private.list\r\n"))
 		case "/private.list":
+			rulesetUA = r.Header.Get("User-Agent")
 			w.Write([]byte("DOMAIN,private.example\n"))
 		case "/empty.list":
 			w.WriteHeader(http.StatusOK)
@@ -36,9 +41,14 @@ func TestRemoteConfigRulesetsAreServedByPrefetchProxy(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp := httptest.NewRecorder()
-	handler.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/sub?config="+url.QueryEscape(source.URL+"/custom.ini"), nil))
+	request := httptest.NewRequest(http.MethodGet, "/sub?config="+url.QueryEscape(source.URL+"/custom.ini")+"&user_agent=Profile%2F1", nil)
+	request.Header.Set("User-Agent", "PrivateClient/secret")
+	handler.ServeHTTP(resp, request)
 	if resp.Code != http.StatusOK || !strings.HasPrefix(resp.Body.String(), "http://prefetch.test/internal/config/") {
 		t.Fatalf("forwarded config = %d %q", resp.Code, resp.Body.String())
+	}
+	if configUA != "Profile/1" {
+		t.Fatalf("remote config UA = %q", configUA)
 	}
 	configURL, _ := url.Parse(resp.Body.String())
 	configResp := httptest.NewRecorder()
@@ -54,11 +64,18 @@ func TestRemoteConfigRulesetsAreServedByPrefetchProxy(t *testing.T) {
 	}
 	rulesURL, _ := url.Parse(field)
 	rulesResp := httptest.NewRecorder()
-	handler.ServeHTTP(rulesResp, httptest.NewRequest(http.MethodGet, rulesURL.RequestURI(), nil))
+	rulesRequest := httptest.NewRequest(http.MethodGet, rulesURL.RequestURI(), nil)
+	rulesRequest.Header.Set("User-Agent", "Backend/other")
+	handler.ServeHTTP(rulesResp, rulesRequest)
 	if rulesResp.Code != http.StatusOK || rulesResp.Body.String() != "DOMAIN,private.example\n" {
 		t.Fatalf("ruleset = %d %q", rulesResp.Code, rulesResp.Body.String())
 	}
-	second, err := service.prepareConfig(httptest.NewRequest(http.MethodGet, "/", nil), source.URL+"/custom.ini")
+	if rulesetUA != "Profile/1" {
+		t.Fatalf("remote ruleset UA = %q", rulesetUA)
+	}
+	profileRequest := httptest.NewRequest(http.MethodGet, "/", nil)
+	profileRequest.Header.Set("User-Agent", "Profile/1")
+	second, err := service.prepareConfig(profileRequest, source.URL+"/custom.ini")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,13 +85,26 @@ func TestRemoteConfigRulesetsAreServedByPrefetchProxy(t *testing.T) {
 	if !strings.Contains(secondConfig.Body.String(), field) {
 		t.Fatal("same ruleset source received a different short link")
 	}
+	otherRequest := httptest.NewRequest(http.MethodGet, "/", nil)
+	otherRequest.Header.Set("User-Agent", "Other/2")
+	other, err := service.prepareConfig(otherRequest, source.URL+"/custom.ini")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherURL, _ := url.Parse(other)
+	otherConfig := httptest.NewRecorder()
+	handler.ServeHTTP(otherConfig, httptest.NewRequest(http.MethodGet, otherURL.RequestURI(), nil))
+	if strings.Contains(otherConfig.Body.String(), field) {
+		t.Fatal("different User-Agents shared a ruleset short link")
+	}
 	sourceRule := source.URL + "/private.list?token=secret"
 	service.ruleLinksMu.Lock()
-	link := service.ruleLinkIDs[sourceRule]
+	linkKey := sourceRule + "\x00Profile/1"
+	link := service.ruleLinkIDs[linkKey]
 	link.reuseUntil = time.Now().Add(-time.Second)
-	service.ruleLinkIDs[sourceRule] = link
+	service.ruleLinkIDs[linkKey] = link
 	service.ruleLinksMu.Unlock()
-	third, err := service.prepareConfig(httptest.NewRequest(http.MethodGet, "/", nil), source.URL+"/custom.ini")
+	third, err := service.prepareConfig(profileRequest, source.URL+"/custom.ini")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +119,7 @@ func TestRemoteConfigRulesetsAreServedByPrefetchProxy(t *testing.T) {
 	if missing.Code != http.StatusNotFound {
 		t.Fatalf("unknown ruleset link = %d", missing.Code)
 	}
-	emptyID, err := service.issueRuleset(source.URL + "/empty.list")
+	emptyID, err := service.issueRuleset(source.URL+"/empty.list", prefetch.DefaultUserAgent)
 	if err != nil {
 		t.Fatal(err)
 	}

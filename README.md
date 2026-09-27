@@ -262,7 +262,7 @@ http://localhost:25500/sub?target=clash&url=<URL 编码后的订阅地址>&confi
 
 两类订阅内容及普通订阅的域名提取标记默认在内存中缓存 3 小时，可用 `PREFETCH_CACHE_TTL` 修改，例如 `30m`、`6h`。无效或非正数时长会使服务启动失败。服务重启后缓存会丢失。请求加 `nocache=1` 会强制刷新全部 HTTP(S) 上游及相关域名提取标记；若其中任一上游刷新失败，本次请求返回错误，之前有效的缓存仍保留。
 
-代理默认使用 `FlClash/v0.8.98 clash-verge Platform/windows` 作为 User-Agent，不转发本地客户端的该请求头。可用请求参数 `user_agent=<URL 编码后的值>` 覆盖；该参数同时作用于代理拉取上游和代理发往 Subconverter 的请求。不同 User-Agent 使用独立缓存。`user_agent` 与 `nocache` 不会转发为 Subconverter 查询参数。
+代理默认使用 `FlClash/v0.8.98 clash-verge Platform/windows` 作为 User-Agent，不转发本地客户端的该请求头。可用请求参数 `user_agent=<URL 编码后的值>` 覆盖；该参数同时作用于代理拉取 HTTP(S) 订阅、远程 `config`、规则集及代理发往 Subconverter 的请求。规则集短链会记住创建它的请求所选 UA，不采用 Subconverter 回读短链时的 UA。订阅缓存和规则集短链按 UA 区分。`user_agent` 与 `nocache` 不会转发为 Subconverter 查询参数。
 
 ### 自动更新节点域名规则
 
@@ -367,7 +367,7 @@ keys:
           target: clash
           config: config/all-online.ini
           filename: abc
-          user_agent: 'FlClash/v0.8.98 clash-verge Platform/windows'
+          user_agent: 'CustomClient/1.0'  # 代理拉取上游和请求 Subconverter 时使用
       "2":
         upstreams: [first, second, third]
         params:
@@ -381,6 +381,8 @@ keys:
 ```text
 https://your-prefetch-proxy.example/sub?chaintoken=<令牌>&coverprofile=1
 ```
+
+在固定订阅配置 YAML 中，将 `user_agent` 写在对应配置的 `params` 下，例如上面配置 1 的 `params.user_agent`。这里填原始 UA 字符串，不做 URL 编码。该值会用于该配置的订阅、远程 `config`、规则集拉取及发往 Subconverter 的请求；未设置时使用代理默认 UA。客户端也可在请求 URL 中加 `&user_agent=Custom%2F1` 临时覆盖配置值。修改 YAML 后需重启 Prefetch Proxy 才会生效。
 
 `params.include` 和 `params.exclude` 都是匹配**节点名称**的正则表达式字符串，分别表示只保留匹配的节点、排除匹配的节点。YAML 中直接写原始表达式，建议用单引号包住；不要预先做 URL 编码，也不要写成 YAML 列表。比如 `include: '(香港|日本)'` 表示名称含“香港”或“日本”，`exclude: '(到期|剩余流量)'` 表示排除名称含任一关键词的节点。如果名称必须同时含“香港”和“专线”，可写 `include: '(?=.*香港)(?=.*专线)'`，与两个词的先后顺序无关。正则里的 `|` 是“或”，不是上游订阅 `url` 的分隔符。
 
@@ -411,7 +413,7 @@ https://your-prefetch-proxy.example/sub?chaintoken=<令牌>&coverprofile=1
 
 `PROXY_PORT` 和 `API_PORT` 必须避免与容器内其他进程占用的端口冲突。`INTERNAL_BASE_URL` 必须是 Subconverter 容器能够访问的地址，不能填写客户端所见但容器无法访问的公网或宿主机地址。
 
-`/sub` 请求指定 HTTP(S) `config` 时，Prefetch Proxy 会读取 INI，将其中 `ruleset=策略组,http(s)://...` 的规则地址替换为短期内部地址，然后把改写后的 INI 地址交给 Subconverter。规则文件由 Prefetch Proxy 在 Subconverter 请求内部地址时获取。非 HTTP(S) 规则（如 `[]GEOIP`、`[]FINAL` 和本地路径）原样保留。配置来源无法读取时转换请求返回 502；规则来源无法读取时内部规则地址返回 502，Subconverter 可能仍生成缺少该规则的输出，因此应检查其日志。配置内部地址有效期为 10 分钟，规则内部地址有效期为 21 分钟；同一规则短链仅在前 10 分钟内复用，确保新配置引用的规则地址不会先于配置过期。
+`/sub` 请求指定 HTTP(S) `config` 时，Prefetch Proxy 会用该请求选定的 UA 读取 INI，将其中 `ruleset=策略组,http(s)://...` 的规则地址替换为短期内部地址，然后把改写后的 INI 地址交给 Subconverter。规则文件由 Prefetch Proxy 在 Subconverter 请求内部地址时获取，仍使用生成短链时选定的 UA。非 HTTP(S) 规则（如 `[]GEOIP`、`[]FINAL` 和本地路径）原样保留。配置来源无法读取时转换请求返回 502；规则来源无法读取时内部规则地址返回 502，Subconverter 可能仍生成缺少该规则的输出，因此应检查其日志。配置内部地址有效期为 10 分钟，规则内部地址有效期为 21 分钟；同一规则 URL 和 UA 的短链仅在前 10 分钟内复用，确保新配置引用的规则地址不会先于配置过期。
 
 若自行准备的 `new.ini` 以 `config/new.ini` 挂载到 Subconverter，需让 Prefetch Proxy 也能读取同一份文件。例如将宿主机上的 `new.ini` 再挂载为 `/shared-config/config/new.ini:ro`，并设置 `CONFIG_DIR=/shared-config`；请求中的 `config` 值仍为 `config/new.ini`。不设置 `CONFIG_DIR` 时，相对路径保持原样，由 Subconverter 自行读取，规则地址不会改写。修改共享 INI 时，请同时更新两个容器的挂载文件。
 

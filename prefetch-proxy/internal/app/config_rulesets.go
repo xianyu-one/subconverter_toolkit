@@ -3,6 +3,7 @@ package app
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"prefetch-proxy/internal/prefetch"
 )
 
 const (
@@ -26,6 +29,18 @@ var configHTTPClient = &http.Client{Timeout: 30 * time.Second}
 type rulesetLink struct {
 	id         string
 	reuseUntil time.Time
+}
+
+type rulesetSource struct {
+	URL       string `json:"url"`
+	UserAgent string `json:"user_agent"`
+}
+
+func selectedUserAgent(r *http.Request) string {
+	if userAgent := r.Header.Get("User-Agent"); userAgent != "" {
+		return userAgent
+	}
+	return prefetch.DefaultUserAgent
 }
 
 func httpURL(raw string) bool {
@@ -50,16 +65,21 @@ func (s *Service) issueInternal(data []byte, prefix string, ttl time.Duration, o
 	return id, nil
 }
 
-func (s *Service) issueRuleset(source string) (string, error) {
+func (s *Service) issueRuleset(source, userAgent string) (string, error) {
 	s.ruleLinksMu.Lock()
 	defer s.ruleLinksMu.Unlock()
-	if link := s.ruleLinkIDs[source]; time.Now().Before(link.reuseUntil) && s.cache.Get("ruleset:"+link.id) != nil {
+	key := source + "\x00" + userAgent
+	if link := s.ruleLinkIDs[key]; time.Now().Before(link.reuseUntil) && s.cache.Get("ruleset:"+link.id) != nil {
 		return link.id, nil
 	}
-	id, err := s.issueInternal([]byte(source), "ruleset:", rulesetLinkTTL, func(expiredID string) {
+	data, err := json.Marshal(rulesetSource{URL: source, UserAgent: userAgent})
+	if err != nil {
+		return "", err
+	}
+	id, err := s.issueInternal(data, "ruleset:", rulesetLinkTTL, func(expiredID string) {
 		s.ruleLinksMu.Lock()
-		if s.ruleLinkIDs[source].id == expiredID {
-			delete(s.ruleLinkIDs, source)
+		if s.ruleLinkIDs[key].id == expiredID {
+			delete(s.ruleLinkIDs, key)
 		}
 		s.ruleLinksMu.Unlock()
 	})
@@ -67,13 +87,13 @@ func (s *Service) issueRuleset(source string) (string, error) {
 		return "", err
 	}
 	// A newly issued config lives for 10 minutes, even if this link is reused.
-	s.ruleLinkIDs[source] = rulesetLink{id: id, reuseUntil: time.Now().Add(rulesetLinkTTL - configLinkTTL - time.Minute)}
+	s.ruleLinkIDs[key] = rulesetLink{id: id, reuseUntil: time.Now().Add(rulesetLinkTTL - configLinkTTL - time.Minute)}
 	return id, nil
 }
 
 func (s *Service) readConfig(r *http.Request, source string) ([]byte, error) {
 	if httpURL(source) {
-		return fetchText(r, source, maxConfigSize)
+		return fetchText(r, source, maxConfigSize, selectedUserAgent(r))
 	}
 	if s.cfg.ConfigDir == "" || strings.Contains(source, ":") || filepath.IsAbs(source) {
 		return nil, fmt.Errorf("config source is not accessible to prefetch-proxy")
@@ -104,12 +124,13 @@ func (s *Service) readConfig(r *http.Request, source string) ([]byte, error) {
 	return readLimited(file, maxConfigSize)
 }
 
-func fetchText(r *http.Request, source string, limit int64) ([]byte, error) {
+func fetchText(r *http.Request, source string, limit int64, userAgent string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, source, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.URL.Scheme = strings.ToLower(req.URL.Scheme)
+	req.Header.Set("User-Agent", userAgent)
 	resp, err := configHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -160,7 +181,7 @@ func (s *Service) prepareConfig(r *http.Request, source string) (string, error) 
 		if !httpURL(sourceURL) {
 			continue
 		}
-		id, err := s.issueRuleset(sourceURL)
+		id, err := s.issueRuleset(sourceURL, selectedUserAgent(r))
 		if err != nil {
 			return "", err
 		}
@@ -208,9 +229,14 @@ func (s *Service) handleInternalRuleset(w http.ResponseWriter, r *http.Request) 
 		http.NotFound(w, r)
 		return
 	}
-	data, err := fetchText(r, string(source), maxRulesetSize)
+	var upstream rulesetSource
+	if err := json.Unmarshal(source, &upstream); err != nil || upstream.URL == "" {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := fetchText(r, upstream.URL, maxRulesetSize, upstream.UserAgent)
 	if err != nil {
-		s.debugLog("读取规则集失败: %s", maskLogURL(string(source)))
+		s.debugLog("读取规则集失败: %s", maskLogURL(upstream.URL))
 		http.Error(w, "Failed to fetch ruleset", http.StatusBadGateway)
 		return
 	}

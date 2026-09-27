@@ -37,6 +37,7 @@ keys:
           target: clash
           config: https://example.com/custom.ini
           filename: abc
+          user_agent: 'CustomClient/1.0'  # 代理拉取上游和请求 Subconverter 时使用
       "2":
         upstreams: [first, second, third]
         params:
@@ -47,6 +48,8 @@ keys:
 ```
 
 `params` 是请求参数名到字符串值的映射，包括 `target`、`config`、`exclude`、`include`、`filename`，以及 Prefetch Proxy 使用的 `user_agent`、`nocache`。`url` 由 `upstreams` 生成；`chaintoken` 与 `coverprofile` 不能写入 `params`。
+
+在固定订阅配置文件中设置 UA 时，在对应配置的 `params` 下写示例中的 `user_agent`。YAML 中填写原始字符串，无须 URL 编码；请求 URL 中的 `&user_agent=Custom%2F2` 可覆盖文件值。该 UA 用于 Prefetch Proxy 拉取订阅、远程 `config`、规则集及请求 Subconverter。规则集由 Subconverter 稍后通过内部短链触发拉取，短链会保留创建时选定的 UA，并按规则 URL 与 UA 分开复用。修改配置文件后重启服务生效。
 
 `include`、`exclude` 的值是匹配节点名称的正则表达式字符串：前者只保留匹配节点，后者排除匹配节点。YAML 中填写原始表达式，不要预先 URL 编码，也不能写成列表；建议使用单引号，避免正则中的反斜杠被 YAML 双引号当作转义字符。多个关键词任选其一时写 `include: '(香港|日本)'`；必须同时出现且不限定顺序时写 `include: '(?=.*香港)(?=.*专线)'`。`exclude: '(到期|剩余流量)'` 会排除名称含任一关键词的节点。Prefetch Proxy 在转发查询参数时会自动编码这些值；手写 `/sub` URL 时才需要编码。正则的 `|` 与上游 `url` 条目间的 `|` 分隔符用途不同。
 
@@ -71,7 +74,7 @@ keys:
 - 显式 `url=` 整体替换该配置的上游组合，不与之合并；若覆盖后的全部上游失败，不回退到文件中的上游。
 - `target`、`config`、`exclude`、`include`、`filename` 及其他 Subconverter 参数各自覆盖同名默认值。
 - 显式传入的空值清除对应的可选默认参数；显式空 `url=` 返回错误。
-- 转发时移除 `chaintoken`、`coverprofile`、`user_agent` 和 `nocache`，保留其他 Subconverter 参数的原有含义。若文件和请求都没有 `target`，由 Subconverter 按其规则处理。`user_agent` 会设置代理拉取上游及发往 Subconverter 请求的 User-Agent 头，URL 参数优先于文件默认值；未设置时使用 `FlClash/v0.8.98 clash-verge Platform/windows`。
+- 转发时移除 `chaintoken`、`coverprofile`、`user_agent` 和 `nocache`，保留其他 Subconverter 参数的原有含义。若文件和请求都没有 `target`，由 Subconverter 按其规则处理。`user_agent` 会设置代理拉取订阅、远程 `config`、规则集及发往 Subconverter 请求的 User-Agent 头，URL 参数优先于文件默认值；未设置时使用 `FlClash/v0.8.98 clash-verge Platform/windows`。
 - `nocache=1` 强制刷新全部 HTTP(S) 上游及普通订阅域名提取标记。刷新其中任何上游失败时本次请求返回错误；之前仍有效的缓存不被失败结果覆盖。
 - 若密钥选中私有节点，继续按现有方式注入；没有私有节点的密钥不注入内部私有节点链接。
 
