@@ -1,0 +1,9 @@
+{
+  "name": "resource-recorder-extension",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check src/background.js && node --check src/model.js && node --check src/rules.js && node --check src/sidepanel.js"
+  }
+}

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Resource Recorder</title>
+    <link rel="stylesheet" href="styles/tokens.css">
+    <link rel="stylesheet" href="styles/sidepanel.css">
+    <script type="module" src="src/sidepanel.js"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="app-header">
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div class="brand-copy"><strong>Resource Recorder</strong><span>请求观察 · Mihomo 规则</span></div>
+      </header>
+
+      <main>
+        <section class="current-tab" aria-labelledby="current-tab-heading">
+          <div class="eyebrow-row"><span class="eyebrow" id="current-tab-heading">浏览器记录</span><span id="recordState" class="state-chip">待命</span></div>
+          <h1 id="tabName">读取标签页…</h1>
+          <p id="tabUrl" class="tab-url"></p>
+          <div class="action-row">
+            <button id="recordButton" class="button button-primary" type="button">开始记录</button>
+            <span class="action-note" id="refreshHint">开始后打开网页，即可记录其加载请求。</span>
+          </div>
+        </section>
+
+        <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+
+        <section class="overview" aria-label="记录概览">
+          <div class="metric"><span class="metric-label">请求</span><strong id="metricRequests">0</strong></div>
+          <div class="metric"><span class="metric-label">目标</span><strong id="metricTargets">0</strong></div>
+          <div class="metric"><span class="metric-label">已知声明大小</span><strong id="metricSize">—</strong></div>
+        </section>
+
+        <section class="workspace" aria-label="请求记录">
+          <div class="view-tabs" role="tablist" aria-label="查看记录">
+            <button id="currentView" class="view-tab is-active" type="button" role="tab" aria-selected="true">当前网页</button>
+            <button id="historyView" class="view-tab" type="button" role="tab" aria-selected="false">已记录网页</button>
+          </div>
+          <div id="historyControls" class="history-controls" hidden>
+            <label for="historySelect">选择网页</label>
+            <select id="historySelect"></select>
+          </div>
+          <div id="sessionHeading" class="session-heading" hidden>
+            <div><span class="eyebrow">请求目标</span><p id="sessionCaption"></p></div>
+            <button id="clearButton" class="text-button" type="button">清除此页</button>
+          </div>
+          <div class="list-tools">
+            <label class="search-field"><span class="visually-hidden">搜索域名或 IP</span><input id="searchInput" type="search" placeholder="搜索域名或 IP…" autocomplete="off"></label>
+            <label class="sort-field"><span class="visually-hidden">排序</span><select id="sortSelect"><option value="slowest">最慢请求</option><option value="size">声明大小</option><option value="count">请求次数</option><option value="host">目标名称</option></select></label>
+          </div>
+          <div id="targetList" class="target-list"></div>
+          <div id="emptyState" class="empty-state" hidden><span class="empty-glyph" aria-hidden="true">⌁</span><strong id="emptyTitle">尚无请求</strong><p id="emptyDescription">开始记录后打开或刷新网页，请求会显示在这里。</p></div>
+        </section>
+      </main>
+
+      <footer class="copy-bar">
+        <div><span class="eyebrow">已选规则</span><strong id="selectionCount">0 条</strong></div>
+        <button id="copySelected" class="button button-dark" type="button" disabled>复制多行规则 <span aria-hidden="true">↗</span></button>
+      </footer>
+    </div>
+  </body>
+</html>
