@@ -26,6 +26,7 @@
 | `rule-list/` | 项目维护的规则列表 |
 | `prefetch-proxy/` | Subconverter 前置代理，用于二次订阅、域名提取和私有节点注入 |
 | `mihomo-observer/` | Mihomo 连接快照采集、SQLite 历史分析与受保护的浏览器界面 |
+| `geox-sync/` | 定时同步 GeoIP、GeoSite、国家 MMDB 和 ASN MMDB 的 Go 工具 |
 | `tests/` | 跨组件配置契约测试 |
 
 ## 自定义 Subconverter 镜像
@@ -429,9 +430,13 @@ make -C mihomo-observer docker
 
 `mihomo-observer/` 中的 Dockerfile、Makefile、Go 源码与依赖、嵌入式网页资源或对应工作流发生变更并推送到 `main` 时，GitHub Actions 通过 Make 构建 `linux/amd64`、`linux/arm64` 镜像，发布 `mrxianyu/mihomo-observer:latest` 和 `sha-<提交 SHA>`。相关 PR 仅构建验证，也可手动触发。
 
+## GeoX Sync
+
+`geox-sync/` 定时下载 GeoIP、GeoSite、国家 MMDB 和 ASN MMDB。支持二进制和容器部署、可配置上游与输出目录，以及由代理端解析目标域名的 SOCKS5 代理。构建、运行示例和配置见 [GeoX Sync README](geox-sync/README.md)。
+
 ## GitHub Actions 触发范围
 
-三个镜像工作流各自只监听会进入镜像的所属组件文件及本工作流文件。修改 `subconverter/` 中的 INI 只会触发 Subconverter 构建；只修改 `rule-list/`、文档或其他组件不会触发无关镜像。PR 只验证构建，`main` 推送和手动触发才发布镜像；手动触发是显式重建入口。
+四个镜像工作流各自只监听所属组件文件及本工作流文件。修改 `subconverter/` 中的 INI 只会触发 Subconverter 构建；只修改 `rule-list/`、顶层文档或其他组件不会触发无关镜像。PR 只验证构建，`main` 推送和手动触发才发布镜像；手动触发是显式重建入口。
 
 ## 本地开发
 

@@ -1,0 +1,6 @@
+.git
+data
+dist
+README.md
+Makefile
+*_test.go
