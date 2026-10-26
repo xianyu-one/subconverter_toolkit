@@ -161,5 +161,6 @@ func (s *Service) handleProxyRequest(w http.ResponseWriter, r *http.Request, pro
 	}
 
 	// 将(可能修改过的)请求移交给内置的反向代理，发送给真实的 Subconverter
+	r = withPrivateVLESS(r, selected)
 	proxy.ServeHTTP(w, r)
 }

@@ -177,3 +177,43 @@ func TestSubscriptionOnlyKeyHasNoPrivateNodes(t *testing.T) {
 		t.Fatalf("key name = %q, %v", name, ok)
 	}
 }
+
+func TestVLESSNodeKeepsMihomoFields(t *testing.T) {
+	input := `proxies:
+  - name: vless-home
+    groups: [family]
+    type: vless
+    server: vless.example.com
+    port: 443
+    uuid: 123e4567-e89b-12d3-a456-426614174000
+    flow: xtls-rprx-vision
+    tls: true
+    servername: www.example.com
+    client-fingerprint: chrome
+    reality-opts:
+      public-key: example-public-key
+      short-id: "0a"
+keys:
+  - name: family
+    token: secret
+    groups: [family]
+`
+	config, err := privateconfig.Parse([]byte(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes, ok := config.Select("secret")
+	if !ok || len(nodes) != 1 {
+		t.Fatalf("VLESS selection = %v, %v", nodes, ok)
+	}
+	node := nodes[0]
+	if node["type"] != "vless" || node["uuid"] != "123e4567-e89b-12d3-a456-426614174000" || node["flow"] != "xtls-rprx-vision" || node["tls"] != true || node["servername"] != "www.example.com" || node["client-fingerprint"] != "chrome" {
+		t.Fatalf("VLESS fields changed: %v", node)
+	}
+	if opts, ok := node["reality-opts"].(privateconfig.Node); !ok || opts["public-key"] != "example-public-key" || opts["short-id"] != "0a" {
+		t.Fatalf("Reality options changed: %v", node["reality-opts"])
+	}
+	if node["dialer-proxy"] != "🚀 前置节点池" {
+		t.Fatalf("missing dialer proxy: %v", node)
+	}
+}

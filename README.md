@@ -337,6 +337,33 @@ keys:
     groups: [shared]
 ```
 
+VLESS 私有节点可与原有节点放在同一份文件中。使用 Mihomo 的 `proxies` 字段填写协议参数；例如 VLESS + Reality：
+
+```yaml
+proxies:
+  - name: vless-home
+    groups: [family]
+    type: vless
+    server: vless.example.com
+    port: 443
+    uuid: 123e4567-e89b-12d3-a456-426614174000
+    flow: xtls-rprx-vision
+    tls: true
+    servername: www.example.com
+    client-fingerprint: chrome
+    reality-opts:
+      public-key: replace-with-server-public-key
+      short-id: "0a"
+keys:
+  - name: family
+    token: replace-with-a-long-random-token
+    nodes: [vless-home]
+```
+
+请用服务端的实际参数替换示例值；`short-id` 建议加引号，以免 YAML 将纯数字值解析为数字。Prefetch Proxy 保留 VLESS 字段并注入 `dialer-proxy`，最终节点需由支持 VLESS 的 Mihomo 客户端使用。其他传输方式可按 [Mihomo VLESS 配置](https://wiki.metacubex.one/config/proxies/vless/)填写。
+
+对于 `encryption: "mlkem768x25519plus..."` 等较新的 VLESS 参数，Prefetch Proxy 会在 Subconverter 生成 `target=clash` 的 YAML 后恢复私有 VLESS 节点的原始协议字段，并保留转换器生成的节点名称，以维持代理组引用。此修正同时适用于仓库内的 Subconverter 镜像和直接使用 `ghcr.io/metacubex/subconverter` 的后端。若转换器未输出可匹配的私有节点，请求会失败，避免把错误的 VMess 节点交给客户端。
+
 配置 Prefetch Proxy：
 
 ```yaml

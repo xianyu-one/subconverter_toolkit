@@ -33,7 +33,8 @@ services:
     restart: always
 
   subconverter:
-    image: tindy2013/subconverter:latest
+    image: subconverter:local
+    build: ../subconverter
     container_name: subconverter
     restart: always
     volumes:

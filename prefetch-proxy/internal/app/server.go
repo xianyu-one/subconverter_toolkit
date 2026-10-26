@@ -64,6 +64,7 @@ func (s *Service) Handler() (http.Handler, error) {
 		// 关键修复：重写请求的 Host 头为后端的 Host，防止后端根据 Host 路由拒绝请求
 		req.Host = targetURL.Host
 	}
+	proxy.ModifyResponse = restorePrivateVLESSResponse
 
 	mux := http.NewServeMux()
 
