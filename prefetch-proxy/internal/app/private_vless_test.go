@@ -79,6 +79,43 @@ func TestRestorePrivateVLESSFromMetaCubeXOutput(t *testing.T) {
 	}
 }
 
+func TestPrivateVLESSSurvivesClashRConversion(t *testing.T) {
+	config, err := privateconfig.Parse([]byte("proxies:\n  - name: HK-XNNET\n    type: vless\n    server: private.example\n    port: 37265\n    uuid: test-id\n    tls: true\n    encryption: \"\"\n    groups: [family]\nkeys:\n  - name: family\n    token: secret\n    groups: [family]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("proxies:\n  - name: upstream\n    type: ss\n    server: upstream.example\n"))
+	}))
+	defer upstream.Close()
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("proxies:\n  - name: '🇭🇰 私有 - HK-XNNET'\n    type: vless\n    server: private.example\n    port: 37265\n    uuid: test-id\n    tls: true\n"))
+	}))
+	defer backend.Close()
+	handler, err := NewService(&Config{SubconverterURL: backend.URL, InternalBaseURL: "http://proxy.test"}, config).Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sub?target=clashr&url="+url.QueryEscape(upstream.URL)+"&chaintoken=secret", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", response.Code, response.Body.String())
+	}
+	var result struct {
+		Proxies []privateconfig.Node `yaml:"proxies"`
+	}
+	if err := yaml.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Proxies) != 1 {
+		t.Fatalf("unexpected proxies: %v", result.Proxies)
+	}
+	value, exists := result.Proxies[0]["encryption"]
+	if !exists || value != "" || result.Proxies[0]["dialer-proxy"] != "🚀 前置节点池" {
+		t.Fatalf("ClashR output lost private VLESS fields: %v", result.Proxies[0])
+	}
+}
+
 func TestRestorePrivateVLESSRejectsMissingNode(t *testing.T) {
 	_, err := restorePrivateVLESS([]byte("proxies: []\n"), []privateconfig.Node{{"name": "private", "type": "vless", "server": "vless.example.com", "port": 443, "uuid": "id"}})
 	if err == nil || !strings.Contains(err.Error(), "missing") {

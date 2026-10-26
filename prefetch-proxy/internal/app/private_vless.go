@@ -25,7 +25,8 @@ func withPrivateVLESS(r *http.Request, nodes []privateconfig.Node) *http.Request
 			vless = append(vless, node)
 		}
 	}
-	if len(vless) == 0 || r.URL.Path != "/sub" || r.URL.Query().Get("target") != "clash" {
+	target := r.URL.Query().Get("target")
+	if len(vless) == 0 || r.URL.Path != "/sub" || (target != "clash" && target != "clashr") {
 		return r
 	}
 	r = r.WithContext(context.WithValue(r.Context(), privateVLESSKey{}, vless))
