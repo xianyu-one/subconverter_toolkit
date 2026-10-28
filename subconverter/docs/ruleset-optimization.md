@@ -12,8 +12,10 @@
 | Amazon 已有 ACL4SSR 列表 | 直接引用上游 `Amazon.list` | Amazon 站点、影音与 AWS 覆盖跟随上游 |
 | Netflix IP 列表提前匹配，可能覆盖其他域名策略 | 移到业务和国内域名之后、国内 IP 兜底之前 | 能识别的域名先按域名策略；未匹配的 Netflix IP 保留 Netflix 策略 |
 | 自维护列表引用旧仓库 `subconverter-toolkit`，6 个来源返回 404 | 两份 INI 均修正为实际仓库 `subconverter_configs` | 保持 lite 分流顺序和策略，仅修复来源 |
-| 同组重复来源 | 删除 ClaudeAI、YouTubeMusic、CN、ChinaDNS、ChinaNet 和本地 UnBan | 已被保留来源覆盖 |
+| 同组重复来源 | 删除 ClaudeAI、YouTubeMusic、CN、ChinaDNS、ChinaNet | 已被保留来源覆盖 |
 | Plex 的精确域名与相同后缀重复 | 只保留三个后缀规则 | 根域名和子域名均直连 |
+| 上游 `UnBan.list` 将 Chrome 更新下载域名 `dl.google.com` 提前直连 | 按用户需求从两份配置移除 UnBan 与广告拦截来源 | `all` 的 Google 通用规则、`lite` 的最终规则负责代理 |
+| 上游 ChinaDomain 未覆盖部分国内抖音资源域名 | 两份配置均引用自维护的抖音直连补充列表 | `douyinvod.click`、`idouyinvod.com`、`douyinvideo.net` → DIRECT |
 
 公开来源覆盖核查时间：2026-10-04。Claude 与 ClaudeAI 当前内容相同；YouTubeMusic 的 `music.youtube.com` 被 YouTube 后缀覆盖；CN、ChinaDNS、ChinaNet 的全部条目已在 ChinaDomain 中。上游列表会变化，删除重复来源的判断不应视为永久不变。
 
@@ -23,7 +25,7 @@ GoogleFCM 含额外推送 IP，GoogleCN 含补充域名，GoogleCNProxyIP 含国
 
 ACL4SSR 已有的业务规则直接引用上游，不维护复制或裁剪列表。OpenAI 保留上游对 Auth0、Stripe、Sentry 等共享服务的覆盖，Amazon 保留上游的 `amazonaws.com` 和 AWS IP；接受这些范围是优先使用上游规则的结果。若需例外，使用少量经过核实的高优先级规则，而不是复制整份业务列表。
 
-本地 UnBan 条目全部被上游白名单覆盖，删除本地文件和两份 INI 的重复引用。自维护列表仅用于未由现有引用覆盖的个人直连和 Android 连通性需求。配置包含 49 个 ruleset 来源，低于当前服务端的 64 个来源上限。
+两份配置都不再引用 UnBan、BanAD 或 BanProgramAD，也不生成广告拦截策略组。自维护列表用于个人直连、国内抖音资源和 Android 连通性需求。`all` 当前包含 47 个 ruleset 来源，低于服务端的 64 个来源上限。
 
 ## 验证与边界
 

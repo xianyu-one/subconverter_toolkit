@@ -15,16 +15,17 @@ import (
 func (s *Service) handleProxyRequest(w http.ResponseWriter, r *http.Request, proxy *httputil.ReverseProxy) {
 	query := r.URL.Query()
 	hasChainToken := query.Has("chaintoken")
+	files := s.currentFileConfig()
 	var selected []privateconfig.Node
 	var keyName string
 	if hasChainToken {
 		var ok bool
-		selected, ok = s.privateNodes.Select(query.Get("chaintoken"))
+		selected, ok = files.privateNodes.Select(query.Get("chaintoken"))
 		if !ok {
 			http.Error(w, "Invalid chaintoken", http.StatusForbidden)
 			return
 		}
-		keyName, _ = s.privateNodes.Name(query.Get("chaintoken"))
+		keyName, _ = files.privateNodes.Name(query.Get("chaintoken"))
 		query.Del("chaintoken")
 		r.URL.RawQuery = query.Encode()
 	}
@@ -33,7 +34,7 @@ func (s *Service) handleProxyRequest(w http.ResponseWriter, r *http.Request, pro
 			http.Error(w, "Invalid chaintoken", http.StatusForbidden)
 			return
 		}
-		profile, ok := s.cfg.CoverProfiles.Select(keyName, query.Get("coverprofile"))
+		profile, ok := files.coverProfiles.Select(keyName, query.Get("coverprofile"))
 		if !ok {
 			http.NotFound(w, r)
 			return

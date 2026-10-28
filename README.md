@@ -82,11 +82,11 @@ http://localhost:25500/sub?target=clash&url=<URL 编码后的订阅地址>&confi
 
 通用的在线规则版本。它会生成按地区和业务划分的策略组，并引用 ACL4SSR 与本仓库公开的规则列表，适合能够直接访问 GitHub Raw 内容的 Subconverter 实例。
 
-规则优先级为：局域网、自维护直连例外和 UnBan 白名单 → 统一广告拦截 → Steam 精细分流 → AI、YouTube 等专用业务 → 通用业务 → 国内域名 → Netflix IP 补充、下载工具和国内 IP → 最终兜底。白名单可以覆盖广告拦截；`BanAD` 与 `BanProgramAD` 都由 `🛑 全球拦截` 控制。
+规则优先级为：局域网和自维护直连例外 → Steam 精细分流 → AI、YouTube 等专用业务 → 通用业务 → 国内域名 → Netflix IP 补充、下载工具和国内 IP → 最终兜底。两份配置均不引用 UnBan 或广告拦截规则。
 
 AI 和 YouTube 规则先于 Google、Microsoft 通用规则，避免 Gemini、YouTube 和 OpenAI 专用端点被宽泛规则抢先匹配。ACL4SSR 已有的业务列表直接引用上游，包括 OpenAI 和 Amazon，不维护裁剪副本；共享认证、支付、监控服务及 AWS 范围遵循上游定义。
 
-已移除重复的 ClaudeAI、YouTubeMusic、CN、ChinaDNS 和 ChinaNet 来源，以及被 ACL4SSR 完全覆盖的本地 UnBan 列表；GoogleFCM、GoogleCN、GoogleCNProxyIP 仍有独立补充覆盖，继续保留。自维护列表只补充个人直连和 Android 连通性需求。规则依据与后续维护边界见[规则集优化说明](subconverter/docs/ruleset-optimization.md)。
+已移除重复的 ClaudeAI、YouTubeMusic、CN、ChinaDNS 和 ChinaNet 来源；GoogleFCM、GoogleCN、GoogleCNProxyIP 仍有独立补充覆盖，继续保留。自维护列表补充个人直连、国内抖音资源和 Android 连通性需求。规则依据与后续维护边界见[规则集优化说明](subconverter/docs/ruleset-optimization.md)。
 
 Steam 默认面向中国大陆宽带，使用 [SteamCN](https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/refs/heads/master/Clash/Ruleset/SteamCN.list) 和 [SteamRegionCheck](https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/refs/heads/master/Clash/Ruleset/SteamRegionCheck.list)，并从共享的 PC 游戏平台组中拆出以下策略组：
 
@@ -126,6 +126,16 @@ https://raw.githubusercontent.com/xianyu-one/subconverter_configs/main/subconver
 ```
 
 原先指向仓库根目录的两个 Raw URL 在目录迁移后需要改为以上路径；已有固定订阅地址也应同步更新。
+
+### Linux apt 更新 Chrome
+
+两份配置不再引用会把 `dl.google.com` 提前直连的 UnBan 列表。该域名在 `all` 中由 Google 规则匹配，在 `lite` 中进入 `🛫 PASSWALL`。Mihomo「连接」页面未显示请求时，可检查 API `/rules` 中相关规则的命中次数；短暂连接可能已从页面消失。若确认 `apt` 未进入 Mihomo，可在运行 Mihomo 的同一台机器上，使用模板默认的 HTTP 代理端口临时为这次安装指定 APT 代理：
+
+```bash
+sudo apt -o 'Acquire::https::Proxy::dl.google.com=http://127.0.0.1:7890/' install google-chrome-stable
+```
+
+若代理在另一台设备上，需将 `127.0.0.1:7890` 换成该设备对本机可达的 HTTP 代理地址和端口。安装时可在 Mihomo「连接」页面确认 `dl.google.com` 已进入预期节点。
 
 ### Mihomo Redir-Host + TUN
 
@@ -167,7 +177,7 @@ IPv6 应在每个平台验证确实经代理出口；节点或客户端无法可
 
 ## 规则列表
 
-`rule-list/` 中的文件使用 Subconverter/Clash Rule Provider 可识别的文本规则格式。目前主要用于补充直连、国内云服务、数据库软件、Plex 和解禁相关域名。
+`rule-list/` 中的文件使用 Subconverter/Clash Rule Provider 可识别的文本规则格式。目前主要用于补充直连、国内抖音资源、国内云服务、数据库软件和 Plex 相关域名。
 
 在转换配置中引用规则文件：
 
@@ -287,6 +297,8 @@ http://localhost:25500/sub?target=clash&url=<URL 编码后的订阅地址>&confi
 `url` 参数包含多个以 `|` 分隔的订阅时，代理会逐一处理。所有 HTTP(S) 订阅均由 Prefetch Proxy 拉取并改写为内部 URL；仅命中 `TARGET_DOMAINS` 的订阅会进入二次获取流程。节点分享链接等非 HTTP(S) 条目原样交给 Subconverter。
 
 两类订阅内容及普通订阅的域名提取标记默认在内存中缓存 3 小时，可用 `PREFETCH_CACHE_TTL` 修改，例如 `30m`、`6h`。无效或非正数时长会使服务启动失败。服务重启后缓存会丢失。请求加 `nocache=1` 会强制刷新全部 HTTP(S) 上游及相关域名提取标记；若其中任一上游刷新失败，本次请求返回错误，之前有效的缓存仍保留。
+
+修改 `PRIVATE_CONFIG_PATH` 或 `COVER_PROFILE_CONFIG_PATH` 指向的 YAML 后，可先运行 `prefetch-proxy check` 检查启动配置，再运行 `prefetch-proxy reload` 让运行中的服务重新读取文件。Compose 部署示例：`docker compose exec prefetch-proxy /app/prefetch-proxy check`，随后运行 `docker compose exec prefetch-proxy /app/prefetch-proxy reload`。`reload` 由运行中的服务校验两份 YAML；若有错误，命令输出原因并以非零状态退出，旧配置继续生效。成功后两份配置一起切换，无需重启，内存中的订阅缓存和现有内部短链会保留。仍可发送 `SIGHUP` 触发 reload，但错误只会写入服务日志。环境变量仍需重启进程才能更新；共享 INI 和规则集文件则按请求读取。
 
 代理默认使用 `FlClash/v0.8.98 clash-verge Platform/windows` 作为 User-Agent，不转发本地客户端的该请求头。可用请求参数 `user_agent=<URL 编码后的值>` 覆盖；该参数同时作用于代理拉取 HTTP(S) 订阅、远程 `config`、规则集及代理发往 Subconverter 的请求。规则集短链会记住创建它的请求所选 UA，不采用 Subconverter 回读短链时的 UA。订阅缓存和规则集短链按 UA 区分。`user_agent` 与 `nocache` 不会转发为 Subconverter 查询参数。
 
@@ -462,6 +474,7 @@ https://your-prefetch-proxy.example/sub?chaintoken=<令牌>&coverprofile=1
 | `FAKE_IP_FILTER_PATH` | 空 | 节点域名 Fake-IP Filter 的写入路径；为空时禁用 |
 | `PRIVATE_CONFIG_PATH` | 空 | 私有节点、组和密钥 YAML 路径；为空时禁用注入 |
 | `COVER_PROFILE_CONFIG_PATH` | 空 | 固定订阅配置 YAML 路径；设置时必须同时设置 `PRIVATE_CONFIG_PATH` |
+| `CONTROL_SOCKET_PATH` | `/tmp/prefetch-proxy.sock` | 本机 `reload` 命令与运行中服务通信的 Unix 套接字路径；两个进程须使用同一路径 |
 | `DEBUG` | `false` | 设为 `true` 输出调试日志及 Mihomo 日志 |
 
 `PROXY_PORT` 和 `API_PORT` 必须避免与容器内其他进程占用的端口冲突。`INTERNAL_BASE_URL` 必须是 Subconverter 容器能够访问的地址，不能填写客户端所见但容器无法访问的公网或宿主机地址。

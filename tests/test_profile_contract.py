@@ -50,11 +50,11 @@ class ProfileContractTest(unittest.TestCase):
             ]
 
         chain = rules(SUBCONVERTER / "lite-online.ini")
-        self.assertEqual(len(chain[:-2]), 17)
+        self.assertIn(["DIRECT", "https://raw.githubusercontent.com/xianyu-one/subconverter_configs/main/rule-list/douyin-direct.list"], chain[:-2])
         self.assertEqual(chain[0][1], "https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/ChinaIp.list")
-        self.assertEqual(chain[-3], ["DIRECT", "[]GEOIP,CN,no-resolve"])
-        self.assertFalse(any("Steam" in source for _, source in chain))
-        self.assertTrue(all(target == "DIRECT" for target, _ in chain[:-2]))
+        geoip_index = chain.index(["DIRECT", "[]GEOIP,CN,no-resolve"])
+        self.assertTrue(all(target == "DIRECT" for target, _ in chain[:geoip_index + 1]))
+        self.assertTrue(all(target == "🛫 PASSWALL" for target, _ in chain[geoip_index + 1:]))
         self.assertEqual(chain[-2], ["🛫 PASSWALL", "https://raw.githubusercontent.com/xianyu-one/subconverter_configs/main/rule-list/android-connectivity.list"])
         self.assertEqual(chain[-1], ["🛫 PASSWALL", "[]FINAL"])
         profile = (SUBCONVERTER / "lite-online.ini").read_text(encoding="utf-8")
@@ -66,7 +66,7 @@ class ProfileContractTest(unittest.TestCase):
             "custom_proxy_group=🔰 节点选择`select`[]✈ 手动选择`[]✈ 延迟最低`[]✈ 故障切换`[]🔒 私有出口选择",
             profile,
         )
-        for group in ("✈ 手动选择", "✈ 延迟最低", "✈ 故障切换", "🌏 全球直连", "🛑 全球拦截"):
+        for group in ("✈ 手动选择", "✈ 延迟最低", "✈ 故障切换", "🌏 全球直连"):
             self.assertIn(f"custom_proxy_group={group}`", profile)
 
 

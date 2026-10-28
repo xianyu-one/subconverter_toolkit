@@ -13,8 +13,12 @@ class ServiceRoutingTest(unittest.TestCase):
                       (ROOT / 'subconverter/all-online.ini').read_text().splitlines()
                       if line.startswith('ruleset=')]
 
-    def route(self, host):
-        for target, source in self.rules:
+    def route(self, host, profile='all-online.ini'):
+        rules = self.rules if profile == 'all-online.ini' else [
+            line[8:].split(',', 1) for line in
+            (ROOT / 'subconverter' / profile).read_text().splitlines()
+            if line.startswith('ruleset=')]
+        for target, source in rules:
             if source == '[]FINAL':
                 return target
             if source.startswith('[]'):
@@ -33,6 +37,24 @@ class ServiceRoutingTest(unittest.TestCase):
                     or (kind == 'DOMAIN-KEYWORD' and value in host)):
                     return target
         self.fail('Missing final rule')
+
+    def test_douyin_media_is_direct_in_both_profiles(self):
+        for profile in ('all-online.ini', 'lite-online.ini'):
+            for host in ('v3.douyinvod.click', 'v3.idouyinvod.com',
+                         'v3.douyinvideo.net', 'v3.douyinpic.com'):
+                with self.subTest(profile=profile, host=host):
+                    self.assertEqual(self.route(host, profile), 'DIRECT')
+            with self.subTest(profile=profile, host='www.tiktok.com'):
+                self.assertNotEqual(self.route('www.tiktok.com', profile), 'DIRECT')
+
+    def test_chrome_update_hosts_use_google_proxy(self):
+        hosts = ('tools.google.com', 'dl.google.com',
+                 'update.googleapis.com', 'edgedl.me.gvt1.com')
+        for profile, target in (('all-online.ini', 'Google'),
+                                ('lite-online.ini', '🛫 PASSWALL')):
+            for host in hosts:
+                with self.subTest(profile=profile, host=host):
+                    self.assertEqual(self.route(host, profile), target)
 
     def test_special_services_win_over_google_and_microsoft(self):
         cases = {
@@ -71,8 +93,8 @@ class ServiceRoutingTest(unittest.TestCase):
         self.assertEqual(self.route('unrelated.cloudfront.net'), '🐟 漏网之鱼')
         for profile in ('all-online.ini', 'lite-online.ini'):
             text = (ROOT / 'subconverter' / profile).read_text()
-            self.assertIn('/ACL4SSR/ACL4SSR/master/Clash/UnBan.list', text)
-            self.assertNotIn('/rule-list/UnBan.list', text)
+            for removed in ('UnBan.list', 'BanAD.list', 'BanProgramAD.list', '🛑 全球拦截'):
+                self.assertNotIn(removed, text)
 
     def test_supplemental_ip_rules_follow_domain_policies(self):
         sources = [s for _, s in self.rules]

@@ -1,10 +1,17 @@
 package app
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"prefetch-proxy/internal/coverconfig"
+	"prefetch-proxy/internal/privateconfig"
 )
 
 func TestPrivateConfigPathIsOptionalButMustLoadWhenSet(t *testing.T) {
@@ -19,6 +26,81 @@ func TestPrivateConfigPathIsOptionalButMustLoadWhenSet(t *testing.T) {
 	_, _, err = loadConfig()
 	if err == nil {
 		t.Fatal("configured missing file did not fail startup")
+	}
+}
+
+func TestReloadFileConfigKeepsCacheAndPreviousConfigOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	privatePath := filepath.Join(dir, "private.yaml")
+	coverPath := filepath.Join(dir, "cover.yaml")
+	write := func(path, data string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	private := func(token string) string {
+		return "keys:\n  - name: alice\n    token: " + token + "\n"
+	}
+	cover := func(source string) string {
+		return "keys:\n  - name: alice\n    upstreams: {one: '" + source + "'}\n    profiles: {'1': {upstreams: [one]}}\n"
+	}
+	write(privatePath, private("old-secret"))
+	write(coverPath, cover("vmess://old"))
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(r.URL.RawQuery))
+	}))
+	defer backend.Close()
+	privateNodes, err := privateconfig.Load(privatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profiles, err := coverconfig.Load(coverPath, privateNodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(&Config{SubconverterURL: backend.URL, PrivateConfigPath: privatePath, CoverProfileConfigPath: coverPath, CoverProfiles: profiles}, privateNodes)
+	t.Setenv("CONTROL_SOCKET_PATH", filepath.Join(dir, "control.sock"))
+	stopControl, err := serveControl(service)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stopControl()
+	service.cache.Set("retained", []byte("subscription"), time.Hour)
+	handler, err := service.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(token string) (int, string) {
+		t.Helper()
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sub?coverprofile=1&chaintoken="+url.QueryEscape(token), nil))
+		query, _ := url.ParseQuery(response.Body.String())
+		return response.Code, query.Get("url")
+	}
+	if status, source := request("old-secret"); status != http.StatusOK || source != "vmess://old" {
+		t.Fatalf("initial config: %d %q", status, source)
+	}
+	write(privatePath, private("new-secret"))
+	write(coverPath, cover("vmess://new"))
+	if err := Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if status, source := request("new-secret"); status != http.StatusOK || source != "vmess://new" {
+		t.Fatalf("reloaded config: %d %q", status, source)
+	}
+	if status, _ := request("old-secret"); status != http.StatusForbidden {
+		t.Fatalf("old token status: %d", status)
+	}
+	if got := service.cache.Get("retained"); string(got) != "subscription" {
+		t.Fatalf("cache lost after reload: %q", got)
+	}
+	write(coverPath, cover("vmess://bad")+"unknown: true\n")
+	if err := Reload(); err == nil || !strings.Contains(err.Error(), "unknown") {
+		t.Fatalf("invalid config was accepted or not explained: %v", err)
+	}
+	if status, source := request("new-secret"); status != http.StatusOK || source != "vmess://new" {
+		t.Fatalf("failed reload changed config: %d %q", status, source)
 	}
 }
 

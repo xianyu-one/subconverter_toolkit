@@ -14,8 +14,6 @@ UPSTREAM = {
                    ('steampowered.com', 'steamserver.net', 'steamcommunity.com')]
                  + [('DOMAIN', 'steampipe.akamaized.net')],
     'Epic.list': [('DOMAIN-SUFFIX', 'epicgames.com')],
-    'UnBan.list': [('DOMAIN-SUFFIX', 'ol.epicgames.com')],
-    'BanAD.list': [('DOMAIN-SUFFIX', 'ol.epicgames.com')],
 }
 
 
@@ -48,7 +46,7 @@ class SteamRoutingTest(unittest.TestCase):
             'steampipe.akamaized.net': '🎮 Steam 下载',
             'store.steampowered.com': '🎮 Steam 出口',
             'steamcommunity.com': '🎮 Steam 出口',
-            'ol.epicgames.com': 'DIRECT',
+            'ol.epicgames.com': '🖥️ PC游戏平台',
         }
         for host, target in cases.items():
             with self.subTest(host=host):
@@ -65,12 +63,9 @@ class SteamRoutingTest(unittest.TestCase):
                 if option.startswith('[]'):
                     self.assertIn(option[2:], {'DIRECT', 'REJECT'} | self.groups.keys())
 
-    def test_blocking_and_domain_priority(self):
+    def test_domain_priority(self):
         sources = [source for _, source in self.rules]
         self.assertEqual(len(sources), len(set(sources)))
-        for target, source in self.rules:
-            if source.endswith(('/BanAD.list', '/BanProgramAD.list')):
-                self.assertEqual(target, '🛑 全球拦截')
         first_ip = next(i for i, s in enumerate(sources) if s.endswith('/ChinaIp.list'))
         self.assertLess(next(i for i, s in enumerate(sources) if s.endswith('/ChinaDomain.list')), first_ip)
         self.assertEqual(self.rules[-1], ['🐟 漏网之鱼', '[]FINAL'])

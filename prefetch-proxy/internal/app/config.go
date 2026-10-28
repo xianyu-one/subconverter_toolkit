@@ -36,13 +36,20 @@ type Config struct {
 type Service struct {
 	cfg          *Config
 	cache        *CacheManager
-	privateNodes *privateconfig.Config
+	reloadMu     sync.Mutex
+	configMu     sync.RWMutex
+	fileConfig   fileConfig
 	privateLinks *privateconfig.LinkStore
 	lockMap      sync.Map
 	ruleLinksMu  sync.Mutex
 	ruleLinkIDs  map[string]rulesetLink
 	rules        *rules.Updater
 	prefetch     *prefetch.Client
+}
+
+type fileConfig struct {
+	privateNodes  *privateconfig.Config
+	coverProfiles *coverconfig.Config
 }
 
 func NewService(cfg *Config, privateNodes *privateconfig.Config) *Service {
@@ -52,13 +59,34 @@ func NewService(cfg *Config, privateNodes *privateconfig.Config) *Service {
 	s := &Service{
 		cfg:          cfg,
 		cache:        &CacheManager{items: make(map[string]CacheItem)},
-		privateNodes: privateNodes,
+		fileConfig:   fileConfig{privateNodes: privateNodes, coverProfiles: cfg.CoverProfiles},
 		privateLinks: privateconfig.NewLinkStore(10*time.Minute, time.Now),
 		ruleLinkIDs:  make(map[string]rulesetLink),
 		rules:        &rules.Updater{RuleListPath: cfg.RuleListPath, FakeIPFilterPath: cfg.FakeIPFilterPath, Debug: cfg.Debug},
 	}
 	s.prefetch = prefetch.NewClient(prefetch.Config{MihomoPath: cfg.MihomoPath, ProxyPort: cfg.ProxyPort, ApiPort: cfg.ApiPort, Debug: cfg.Debug}, s.debugLog, maskLogURL)
 	return s
+}
+
+// reloadFileConfig validates both files before publishing a new configuration.
+// Existing requests retain their snapshot, and caches are left untouched.
+func (s *Service) reloadFileConfig() error {
+	s.reloadMu.Lock()
+	defer s.reloadMu.Unlock()
+	next, err := loadFileConfig(s.cfg.PrivateConfigPath, s.cfg.CoverProfileConfigPath)
+	if err != nil {
+		return err
+	}
+	s.configMu.Lock()
+	s.fileConfig = next
+	s.configMu.Unlock()
+	return nil
+}
+
+func (s *Service) currentFileConfig() fileConfig {
+	s.configMu.RLock()
+	defer s.configMu.RUnlock()
+	return s.fileConfig
 }
 
 // debugLog 调试日志输出，仅在 Debug 模式开启时打印
@@ -137,23 +165,32 @@ func loadConfig() (*Config, *privateconfig.Config, error) {
 	if domains != "" {
 		cfg.TargetDomains = strings.Split(domains, ",")
 	}
-	var privateNodes *privateconfig.Config
-	if cfg.PrivateConfigPath != "" {
+	files, err := loadFileConfig(cfg.PrivateConfigPath, cfg.CoverProfileConfigPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	cfg.CoverProfiles = files.coverProfiles
+	return cfg, files.privateNodes, nil
+}
+
+func loadFileConfig(privatePath, coverPath string) (fileConfig, error) {
+	var files fileConfig
+	if privatePath != "" {
 		var err error
-		privateNodes, err = privateconfig.Load(cfg.PrivateConfigPath)
+		files.privateNodes, err = privateconfig.Load(privatePath)
 		if err != nil {
-			return nil, nil, err
+			return fileConfig{}, err
 		}
 	}
-	if cfg.CoverProfileConfigPath != "" {
-		if privateNodes == nil {
-			return nil, nil, fmt.Errorf("COVER_PROFILE_CONFIG_PATH requires PRIVATE_CONFIG_PATH")
+	if coverPath != "" {
+		if files.privateNodes == nil {
+			return fileConfig{}, fmt.Errorf("COVER_PROFILE_CONFIG_PATH requires PRIVATE_CONFIG_PATH")
 		}
 		var err error
-		cfg.CoverProfiles, err = coverconfig.Load(cfg.CoverProfileConfigPath, privateNodes)
+		files.coverProfiles, err = coverconfig.Load(coverPath, files.privateNodes)
 		if err != nil {
-			return nil, nil, err
+			return fileConfig{}, err
 		}
 	}
-	return cfg, privateNodes, nil
+	return files, nil
 }

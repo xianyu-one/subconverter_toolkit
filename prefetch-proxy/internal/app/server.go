@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
 
@@ -15,6 +18,23 @@ func Run() {
 		log.Fatalf("配置加载失败: %v", err)
 	}
 	service := NewService(cfg, privateNodes)
+	stopControl, err := serveControl(service)
+	if err != nil {
+		log.Fatalf("创建 reload 控制通道失败: %v", err)
+	}
+	defer stopControl()
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGHUP)
+	defer signal.Stop(signals)
+	go func() {
+		for range signals {
+			if err := service.reloadFileConfig(); err != nil {
+				log.Printf("配置重新加载失败，继续使用旧配置: %v", err)
+			} else {
+				log.Printf("私有节点与固定订阅配置已重新加载")
+			}
+		}
+	}()
 	log.Printf("服务启动监听在 %s，Subconverter 后端: %s", cfg.ListenAddr, cfg.SubconverterURL)
 	log.Printf("目标拦截域名: %v", cfg.TargetDomains)
 
